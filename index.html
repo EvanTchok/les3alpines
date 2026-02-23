@@ -1,129 +1,3373 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Les 3 Alpines – Championnat Amateur de Trail</title>
+Action: {"tool_name": "mcp_view_bulk", "tool_arguments": {"paths": ["/app/backend/server.py", "/app/frontend/src/App.js", "/app/frontend/src/index.css", "/app/frontend/src/App.css", "/app/frontend/src/components/Layout/Navbar.jsx", "/app/frontend/src/components/Layout/Footer.jsx", "/app/frontend/src/components/Layout/Layout.jsx"], "request_id": "tooluse_8qM0hiRwGxQeisZFBO21Wz"}, "type": "mcp_tool"}
+Observation: ===FILE: /app/backend/server.py
+/app/backend/server.py:
+1|from fastapi import FastAPI, APIRouter, HTTPException
+2|from dotenv import load_dotenv
+3|from starlette.middleware.cors import CORSMiddleware
+4|from motor.motor_asyncio import AsyncIOMotorClient
+5|import os
+6|import logging
+7|from pathlib import Path
+8|from pydantic import BaseModel, Field, ConfigDict, EmailStr
+9|from typing import List, Optional
+10|import uuid
+11|from datetime import datetime, timezone
+12|
+13|ROOT_DIR = Path(__file__).parent
+14|load_dotenv(ROOT_DIR / '.env')
+15|
+16|# MongoDB connection
+17|mongo_url = os.environ['MONGO_URL']
+18|client = AsyncIOMotorClient(mongo_url)
+19|db = client[os.environ['DB_NAME']]
+20|
+21|# Create the main app without a prefix
+22|app = FastAPI()
+23|
+24|# Create a router with the /api prefix
+25|api_router = APIRouter(prefix="/api")
+26|
+27|# Define Models
+28|class StatusCheck(BaseModel):
+29|    model_config = ConfigDict(extra="ignore")
+30|    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+31|    client_name: str
+32|    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+33|
+34|class StatusCheckCreate(BaseModel):
+35|    client_name: str
+36|
+37|# Newsletter subscription
+38|class NewsletterSubscription(BaseModel):
+39|    email: EmailStr
+40|    subscribed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+41|
+42|class NewsletterSubscriptionCreate(BaseModel):
+43|    email: EmailStr
+44|
+45|# Contact form
+46|class ContactMessage(BaseModel):
+47|    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+48|    name: str
+49|    email: EmailStr
+50|    subject: str
+51|    message: str
+52|    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+53|
+54|class ContactMessageCreate(BaseModel):
+55|    name: str
+56|    email: EmailStr
+57|    subject: str
+58|    message: str
+59|
+60|# Partner form
+61|class PartnerRequest(BaseModel):
+62|    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+63|    company_name: str
+64|    contact_name: str
+65|    email: EmailStr
+66|    phone: Optional[str] = None
+67|    pack_interest: str
+68|    message: Optional[str] = None
+69|    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+70|
+71|class PartnerRequestCreate(BaseModel):
+72|    company_name: str
+73|    contact_name: str
+74|    email: EmailStr
+75|    phone: Optional[str] = None
+76|    pack_interest: str
+77|    message: Optional[str] = None
+78|
+79|# API Routes
+80|@api_router.get("/")
+81|async def root():
+82|    return {"message": "Les 3 Alpines API"}
+83|
+84|@api_router.post("/status", response_model=StatusCheck)
+85|async def create_status_check(input: StatusCheckCreate):
+86|    status_dict = input.model_dump()
+87|    status_obj = StatusCheck(**status_dict)
+88|    doc = status_obj.model_dump()
+89|    doc['timestamp'] = doc['timestamp'].isoformat()
+90|    _ = await db.status_checks.insert_one(doc)
+91|    return status_obj
+92|
+93|@api_router.get("/status", response_model=List[StatusCheck])
+94|async def get_status_checks():
+95|    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
+96|    for check in status_checks:
+97|        if isinstance(check['timestamp'], str):
+98|            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
+99|    return status_checks
+100|
+101|# Newsletter endpoint
+102|@api_router.post("/newsletter")
+103|async def subscribe_newsletter(subscription: NewsletterSubscriptionCreate):
+104|    # Check if email already exists
+105|    existing = await db.newsletter.find_one({"email": subscription.email}, {"_id": 0})
+106|    if existing:
+107|        return {"success": True, "message": "Vous êtes déjà inscrit à notre newsletter !"}
+108|    
+109|    doc = {
+110|        "email": subscription.email,
+111|        "subscribed_at": datetime.now(timezone.utc).isoformat()
+112|    }
+113|    await db.newsletter.insert_one(doc)
+114|    return {"success": True, "message": "Inscription réussie ! Vous recevrez bientôt nos actualités."}
+115|
+116|# Contact form endpoint
+117|@api_router.post("/contact")
+118|async def submit_contact(contact: ContactMessageCreate):
+119|    contact_obj = ContactMessage(**contact.model_dump())
+120|    doc = contact_obj.model_dump()
+121|    doc['created_at'] = doc['created_at'].isoformat()
+122|    await db.contacts.insert_one(doc)
+123|    return {"success": True, "message": "Message envoyé avec succès ! Nous vous répondrons rapidement."}
+124|
+125|# Partner request endpoint
+126|@api_router.post("/partner")
+127|async def submit_partner_request(partner: PartnerRequestCreate):
+128|    partner_obj = PartnerRequest(**partner.model_dump())
+129|    doc = partner_obj.model_dump()
+130|    doc['created_at'] = doc['created_at'].isoformat()
+131|    await db.partners.insert_one(doc)
+132|    return {"success": True, "message": "Demande de partenariat envoyée ! Notre équipe vous contactera sous 48h."}
+133|
+134|# Get all newsletter subscriptions (for admin)
+135|@api_router.get("/newsletter")
+136|async def get_newsletter_subscriptions():
+137|    subscriptions = await db.newsletter.find({}, {"_id": 0}).to_list(1000)
+138|    return subscriptions
+139|
+140|# Get all contact messages (for admin)
+141|@api_router.get("/contacts")
+142|async def get_contacts():
+143|    contacts = await db.contacts.find({}, {"_id": 0}).to_list(1000)
+144|    return contacts
+145|
+146|# Get all partner requests (for admin)
+147|@api_router.get("/partners")
+148|async def get_partners():
+149|    partners = await db.partners.find({}, {"_id": 0}).to_list(1000)
+150|    return partners
+151|
+152|# Include the router in the main app
+153|app.include_router(api_router)
+154|
+155|app.add_middleware(
+156|    CORSMiddleware,
+157|    allow_credentials=True,
+158|    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+159|    allow_methods=["*"],
+160|    allow_headers=["*"],
+161|)
+162|
+163|# Configure logging
+164|logging.basicConfig(
+165|    level=logging.INFO,
+166|    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+167|)
+168|logger = logging.getLogger(__name__)
+169|
+170|@app.on_event("shutdown")
+171|async def shutdown_db_client():
+172|    client.close()
+173|
 
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;600;800&display=swap" rel="stylesheet">
+===END
 
-<style>
-body {
-    margin: 0;
-    font-family: 'Montserrat', sans-serif;
-    background-color: #0D1B2A;
-    color: white;
-}
+===FILE: /app/frontend/src/App.js
+/app/frontend/src/App.js:
+1|import "@/App.css";
+2|import { BrowserRouter, Routes, Route } from "react-router-dom";
+3|import { Layout } from "./components/Layout/Layout";
+4|import { Home } from "./pages/Home";
+5|import { Championship } from "./pages/Championship";
+6|import { Races } from "./pages/Races";
+7|import { Massifs } from "./pages/Massifs";
+8|import { Partners } from "./pages/Partners";
+9|import { Blog } from "./pages/Blog";
+10|import { Contact } from "./pages/Contact";
+11|
+12|function App() {
+13|  return (
+14|    <div className="App">
+15|      <BrowserRouter>
+16|        <Layout>
+17|          <Routes>
+18|            <Route path="/" element={<Home />} />
+19|            <Route path="/championnat" element={<Championship />} />
+20|            <Route path="/courses" element={<Races />} />
+21|            <Route path="/massifs" element={<Massifs />} />
+22|            <Route path="/partenaires" element={<Partners />} />
+23|            <Route path="/blog" element={<Blog />} />
+24|            <Route path="/contact" element={<Contact />} />
+25|          </Routes>
+26|        </Layout>
+27|      </BrowserRouter>
+28|    </div>
+29|  );
+30|}
+31|
+32|export default App;
+33|
 
-header {
-    height: 100vh;
-    background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)),
-    url('https://images.unsplash.com/photo-1500530855697-b586d89ba3ee');
-    background-size: cover;
-    background-position: center;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    text-align: center;
-    padding: 20px;
-}
+===END
 
-h1 {
-    font-size: 3rem;
-    margin-bottom: 10px;
-}
+===FILE: /app/frontend/src/index.css
+/app/frontend/src/index.css:
+1|@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=Inter:wght@300;400;500;600&display=swap');
+2|
+3|@tailwind base;
+4|@tailwind components;
+5|@tailwind utilities;
+6|
+7|:root {
+8|  --brand-blue: #0EA5E9;
+9|  --brand-green: #10B981;
+10|  --brand-orange: #F97316;
+11|  --brand-slate: #0F172A;
+12|}
+13|
+14|body {
+15|  margin: 0;
+16|  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", sans-serif;
+17|  -webkit-font-smoothing: antialiased;
+18|  -moz-osx-font-smoothing: grayscale;
+19|}
+20|
+21|h1, h2, h3, h4, h5, h6 {
+22|  font-family: 'Barlow Condensed', sans-serif;
+23|}
+24|
+25|code {
+26|  font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+27|}
+28|
+29|@layer base {
+30|  :root {
+31|    --background: 0 0% 100%;
+32|    --foreground: 222 47% 11%;
+33|    --card: 0 0% 100%;
+34|    --card-foreground: 222 47% 11%;
+35|    --popover: 0 0% 100%;
+36|    --popover-foreground: 222 47% 11%;
+37|    --primary: 222 47% 11%;
+38|    --primary-foreground: 210 40% 98%;
+39|    --secondary: 210 40% 96%;
+40|    --secondary-foreground: 222 47% 11%;
+41|    --muted: 210 40% 96%;
+42|    --muted-foreground: 215 16% 47%;
+43|    --accent: 24 95% 53%;
+44|    --accent-foreground: 0 0% 100%;
+45|    --destructive: 0 84% 60%;
+46|    --destructive-foreground: 210 40% 98%;
+47|    --border: 214 32% 91%;
+48|    --input: 214 32% 91%;
+49|    --ring: 222 47% 11%;
+50|    --radius: 0.5rem;
+51|  }
+52|}
+53|
+54|@layer base {
+55|  * {
+56|    @apply border-border;
+57|  }
+58|  body {
+59|    @apply bg-background text-foreground;
+60|  }
+61|}
+62|
+63|/* Custom utility classes */
+64|.font-heading {
+65|  font-family: 'Barlow Condensed', sans-serif;
+66|}
+67|
+68|.font-body {
+69|  font-family: 'Inter', sans-serif;
+70|}
+71|
+72|/* Hero overlay gradient */
+73|.hero-overlay {
+74|  background: linear-gradient(to bottom, rgba(15, 23, 42, 0.6), rgba(15, 23, 42, 0.3));
+75|}
+76|
+77|/* Smooth scrolling */
+78|html {
+79|  scroll-behavior: smooth;
+80|}
+81|
+82|/* Animation classes */
+83|@keyframes fadeInUp {
+84|  from {
+85|    opacity: 0;
+86|    transform: translateY(30px);
+87|  }
+88|  to {
+89|    opacity: 1;
+90|    transform: translateY(0);
+91|  }
+92|}
+93|
+94|.animate-fade-in-up {
+95|  animation: fadeInUp 0.6s ease-out forwards;
+96|}
+97|
+98|.animation-delay-200 {
+99|  animation-delay: 200ms;
+100|}
+101|
+102|.animation-delay-400 {
+103|  animation-delay: 400ms;
+104|}
+105|
+106|.animation-delay-600 {
+107|  animation-delay: 600ms;
+108|}
+109|
+110|/* Custom scrollbar */
+111|::-webkit-scrollbar {
+112|  width: 8px;
+113|}
+114|
+115|::-webkit-scrollbar-track {
+116|  background: #f1f5f9;
+117|}
+118|
+119|::-webkit-scrollbar-thumb {
+120|  background: #94a3b8;
+121|  border-radius: 4px;
+122|}
+123|
+124|::-webkit-scrollbar-thumb:hover {
+125|  background: #64748b;
+126|}
+127|
+128|@layer base {
+129|  [data-debug-wrapper="true"] {
+130|    display: contents !important;
+131|  }
+132|}
+133|
 
-h2 {
-    font-weight: 300;
-    margin-bottom: 30px;
-}
+===END
 
-button {
-    padding: 15px 30px;
-    font-size: 1rem;
-    border: none;
-    background-color: #F77F00;
-    color: white;
-    cursor: pointer;
-    border-radius: 5px;
-    transition: 0.3s;
-}
+===FILE: /app/frontend/src/App.css
+/app/frontend/src/App.css:
+1|/* Les 3 Alpines - Custom Styles */
+2|
+3|/* Logo variations */
+4|.logo-dark {
+5|  filter: brightness(0) invert(0);
+6|}
+7|
+8|.logo-light {
+9|  filter: brightness(0) invert(1);
+10|}
+11|
+12|/* Hero section */
+13|.hero-section {
+14|  min-height: 100vh;
+15|  position: relative;
+16|}
+17|
+18|.hero-content {
+19|  position: relative;
+20|  z-index: 10;
+21|}
+22|
+23|/* Section styling */
+24|.section-padding {
+25|  padding: 5rem 0;
+26|}
+27|
+28|@media (min-width: 768px) {
+29|  .section-padding {
+30|    padding: 8rem 0;
+31|  }
+32|}
+33|
+34|/* Card hover effects */
+35|.card-hover {
+36|  transition: all 0.3s ease;
+37|}
+38|
+39|.card-hover:hover {
+40|  transform: translateY(-4px);
+41|  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+42|}
+43|
+44|/* Button styles */
+45|.btn-primary {
+46|  @apply inline-flex items-center justify-center rounded-full bg-orange-500 px-8 py-4 text-lg font-bold text-white transition-all;
+47|}
+48|
+49|.btn-primary:hover {
+50|  @apply bg-orange-600 scale-105;
+51|}
+52|
+53|.btn-secondary {
+54|  @apply inline-flex items-center justify-center rounded-full border-2 border-slate-900 bg-transparent px-8 py-4 text-lg font-bold text-slate-900 transition-all;
+55|}
+56|
+57|.btn-secondary:hover {
+58|  @apply bg-slate-900 text-white;
+59|}
+60|
+61|/* Timeline styling */
+62|.timeline-line {
+63|  position: absolute;
+64|  left: 50%;
+65|  transform: translateX(-50%);
+66|  width: 2px;
+67|  height: 100%;
+68|  background: linear-gradient(to bottom, #0EA5E9, #10B981);
+69|}
+70|
+71|@media (max-width: 768px) {
+72|  .timeline-line {
+73|    left: 20px;
+74|  }
+75|}
+76|
+77|/* Massif cards */
+78|.massif-card {
+79|  position: relative;
+80|  overflow: hidden;
+81|  border-radius: 0;
+82|}
+83|
+84|.massif-card::before {
+85|  content: '';
+86|  position: absolute;
+87|  inset: 0;
+88|  background: linear-gradient(to top, rgba(15, 23, 42, 0.8), transparent);
+89|  z-index: 1;
+90|}
+91|
+92|.massif-card-content {
+93|  position: relative;
+94|  z-index: 2;
+95|}
+96|
+97|/* Navigation styling */
+98|.nav-link {
+99|  @apply text-slate-600 hover:text-slate-900 transition-colors font-medium;
+100|}
+101|
+102|.nav-link-active {
+103|  @apply text-orange-500 font-semibold;
+104|}
+105|
+106|/* Form styling */
+107|.form-input {
+108|  @apply flex h-12 w-full border border-slate-200 bg-white px-4 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all;
+109|}
+110|
+111|.form-textarea {
+112|  @apply w-full border border-slate-200 bg-white px-4 py-3 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all resize-none;
+113|}
+114|
+115|/* FAQ accordion */
+116|.faq-item {
+117|  border-bottom: 1px solid #e2e8f0;
+118|}
+119|
+120|.faq-item:last-child {
+121|  border-bottom: none;
+122|}
+123|
+124|/* Partner pack cards */
+125|.pack-card {
+126|  @apply bg-white border border-slate-200 p-8 transition-all;
+127|}
+128|
+129|.pack-card:hover {
+130|  @apply border-orange-500 shadow-lg;
+131|}
+132|
+133|.pack-card-featured {
+134|  @apply border-2 border-orange-500 relative;
+135|}
+136|
+137|.pack-card-featured::before {
+138|  content: 'Populaire';
+139|  @apply absolute -top-3 left-1/2 -translate-x-1/2 bg-orange-500 text-white text-sm font-bold px-4 py-1;
+140|}
+141|
+142|/* Blog card */
+143|.blog-card {
+144|  @apply bg-white overflow-hidden transition-all;
+145|}
+146|
+147|.blog-card:hover {
+148|  @apply shadow-xl;
+149|}
+150|
+151|.blog-card:hover .blog-card-image {
+152|  @apply scale-105;
+153|}
+154|
+155|.blog-card-image {
+156|  @apply transition-transform duration-500;
+157|}
+158|
+159|/* Jersey badges */
+160|.jersey-badge {
+161|  @apply inline-flex items-center gap-2 px-4 py-2 font-bold text-sm uppercase tracking-wide;
+162|}
+163|
+164|.jersey-leader {
+165|  @apply bg-yellow-400 text-yellow-900;
+166|}
+167|
+168|.jersey-climber {
+169|  @apply bg-red-500 text-white;
+170|}
+171|
+172|.jersey-descender {
+173|  @apply bg-blue-500 text-white;
+174|}
+175|
+176|.jersey-young {
+177|  @apply bg-white text-slate-900 border border-slate-200;
+178|}
+179|
+180|/* Responsive container */
+181|.container-custom {
+182|  @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+183|}
+184|
+185|/* Text gradient */
+186|.text-gradient {
+187|  background: linear-gradient(to right, #0EA5E9, #10B981);
+188|  -webkit-background-clip: text;
+189|  -webkit-text-fill-color: transparent;
+190|  background-clip: text;
+191|}
+192|
 
-button:hover {
-    background-color: #d86f00;
-}
+===END
 
-section {
-    padding: 80px 20px;
-    max-width: 1000px;
-    margin: auto;
-}
+===FILE: /app/frontend/src/components/Layout/Navbar.jsx
+/app/frontend/src/components/Layout/Navbar.jsx:
+1|import { useState } from 'react';
+2|import { Link, useLocation } from 'react-router-dom';
+3|import { Menu, X, Mountain } from 'lucide-react';
+4|
+5|const LOGO_URL = "https://customer-assets.emergentagent.com/job_31b4bdc1-bf96-4122-a789-913196646595/artifacts/7501hgx6_Picture%201.png";
+6|
+7|const navLinks = [
+8|  { name: 'Accueil', path: '/' },
+9|  { name: 'Championnat 2027', path: '/championnat' },
+10|  { name: 'Courses', path: '/courses' },
+11|  { name: 'Massifs', path: '/massifs' },
+12|  { name: 'Partenaires', path: '/partenaires' },
+13|  { name: 'Blog', path: '/blog' },
+14|  { name: 'Contact', path: '/contact' },
+15|];
+16|
+17|export const Navbar = () => {
+18|  const [isOpen, setIsOpen] = useState(false);
+19|  const location = useLocation();
+20|
+21|  const isActive = (path) => location.pathname === path;
+22|
+23|  return (
+24|    <nav className="fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-100" data-testid="navbar">
+25|      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+26|        <div className="flex items-center justify-between h-20">
+27|          {/* Logo */}
+28|          <Link to="/" className="flex items-center gap-3" data-testid="navbar-logo">
+29|            <img 
+30|              src={LOGO_URL} 
+31|              alt="Les 3 Alpines" 
+32|              className="h-12 w-auto invert"
+33|            />
+34|          </Link>
+35|
+36|          {/* Desktop Navigation */}
+37|          <div className="hidden lg:flex items-center gap-8">
+38|            {navLinks.map((link) => (
+39|              <Link
+40|                key={link.path}
+41|                to={link.path}
+42|                className={`font-medium text-sm uppercase tracking-wide transition-colors ${
+43|                  isActive(link.path)
+44|                    ? 'text-orange-500'
+45|                    : 'text-slate-600 hover:text-slate-900'
+46|                }`}
+47|                data-testid={`nav-link-${link.path.replace('/', '') || 'home'}`}
+48|              >
+49|                {link.name}
+50|              </Link>
+51|            ))}
+52|          </div>
+53|
+54|          {/* CTA Button - Desktop */}
+55|          <div className="hidden lg:block">
+56|            <Link
+57|              to="/courses"
+58|              className="inline-flex items-center justify-center rounded-full bg-orange-500 px-6 py-3 text-sm font-bold text-white transition-all hover:bg-orange-600 hover:scale-105"
+59|              data-testid="navbar-cta"
+60|            >
+61|              S'inscrire
+62|            </Link>
+63|          </div>
+64|
+65|          {/* Mobile Menu Button */}
+66|          <button
+67|            onClick={() => setIsOpen(!isOpen)}
+68|            className="lg:hidden p-2 text-slate-900"
+69|            data-testid="mobile-menu-toggle"
+70|          >
+71|            {isOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+72|          </button>
+73|        </div>
+74|      </div>
+75|
+76|      {/* Mobile Navigation */}
+77|      {isOpen && (
+78|        <div className="lg:hidden bg-white border-t border-slate-100" data-testid="mobile-menu">
+79|          <div className="px-4 py-6 space-y-4">
+80|            {navLinks.map((link) => (
+81|              <Link
+82|                key={link.path}
+83|                to={link.path}
+84|                onClick={() => setIsOpen(false)}
+85|                className={`block py-2 font-medium text-lg ${
+86|                  isActive(link.path)
+87|                    ? 'text-orange-500'
+88|                    : 'text-slate-600'
+89|                }`}
+90|                data-testid={`mobile-nav-link-${link.path.replace('/', '') || 'home'}`}
+91|              >
+92|                {link.name}
+93|              </Link>
+94|            ))}
+95|            <Link
+96|              to="/courses"
+97|              onClick={() => setIsOpen(false)}
+98|              className="block w-full text-center rounded-full bg-orange-500 px-6 py-3 font-bold text-white mt-4"
+99|              data-testid="mobile-cta"
+100|            >
+101|              S'inscrire
+102|            </Link>
+103|          </div>
+104|        </div>
+105|      )}
+106|    </nav>
+107|  );
+108|};
+109|
+110|export default Navbar;
+111|
 
-.section-dark {
-    background-color: #1B263B;
-}
+===END
 
-.section-light {
-    background-color: #415A77;
-}
+===FILE: /app/frontend/src/components/Layout/Footer.jsx
+/app/frontend/src/components/Layout/Footer.jsx:
+1|import { Link } from 'react-router-dom';
+2|import { Instagram, Facebook, Mail, MapPin, Mountain } from 'lucide-react';
+3|
+4|const LOGO_URL = "https://customer-assets.emergentagent.com/job_31b4bdc1-bf96-4122-a789-913196646595/artifacts/7501hgx6_Picture%201.png";
+5|
+6|export const Footer = () => {
+7|  return (
+8|    <footer className="bg-slate-900 text-white" data-testid="footer">
+9|      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
+10|        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12">
+11|          {/* Brand */}
+12|          <div className="space-y-4">
+13|            <img 
+14|              src={LOGO_URL} 
+15|              alt="Les 3 Alpines" 
+16|              className="h-16 w-auto"
+17|              data-testid="footer-logo"
+18|            />
+19|            <p className="text-slate-400 text-sm leading-relaxed">
+20|              Le nouveau rendez-vous trail de Grenoble. Trois massifs, une légende.
+21|            </p>
+22|            <div className="flex items-center gap-4 pt-2">
+23|              <a 
+24|                href="https://instagram.com" 
+25|                target="_blank" 
+26|                rel="noopener noreferrer"
+27|                className="text-slate-400 hover:text-white transition-colors"
+28|                data-testid="footer-instagram"
+29|              >
+30|                <Instagram className="h-5 w-5" />
+31|              </a>
+32|              <a 
+33|                href="https://facebook.com" 
+34|                target="_blank" 
+35|                rel="noopener noreferrer"
+36|                className="text-slate-400 hover:text-white transition-colors"
+37|                data-testid="footer-facebook"
+38|              >
+39|                <Facebook className="h-5 w-5" />
+40|              </a>
+41|              <a 
+42|                href="mailto:contact@les3alpines.fr"
+43|                className="text-slate-400 hover:text-white transition-colors"
+44|                data-testid="footer-email"
+45|              >
+46|                <Mail className="h-5 w-5" />
+47|              </a>
+48|            </div>
+49|          </div>
+50|
+51|          {/* Navigation */}
+52|          <div>
+53|            <h4 className="font-heading text-lg font-bold uppercase tracking-wide mb-4">Navigation</h4>
+54|            <ul className="space-y-3">
+55|              <li>
+56|                <Link to="/" className="text-slate-400 hover:text-white transition-colors text-sm">
+57|                  Accueil
+58|                </Link>
+59|              </li>
+60|              <li>
+61|                <Link to="/championnat" className="text-slate-400 hover:text-white transition-colors text-sm">
+62|                  Championnat 2027
+63|                </Link>
+64|              </li>
+65|              <li>
+66|                <Link to="/courses" className="text-slate-400 hover:text-white transition-colors text-sm">
+67|                  Courses
+68|                </Link>
+69|              </li>
+70|              <li>
+71|                <Link to="/massifs" className="text-slate-400 hover:text-white transition-colors text-sm">
+72|                  Massifs
+73|                </Link>
+74|              </li>
+75|              <li>
+76|                <Link to="/partenaires" className="text-slate-400 hover:text-white transition-colors text-sm">
+77|                  Partenaires
+78|                </Link>
+79|              </li>
+80|            </ul>
+81|          </div>
+82|
+83|          {/* Les Massifs */}
+84|          <div>
+85|            <h4 className="font-heading text-lg font-bold uppercase tracking-wide mb-4">Les Massifs</h4>
+86|            <ul className="space-y-3">
+87|              <li className="flex items-center gap-2 text-slate-400 text-sm">
+88|                <Mountain className="h-4 w-4 text-emerald-500" />
+89|                Chartreuse
+90|              </li>
+91|              <li className="flex items-center gap-2 text-slate-400 text-sm">
+92|                <Mountain className="h-4 w-4 text-sky-500" />
+93|                Belledonne
+94|              </li>
+95|              <li className="flex items-center gap-2 text-slate-400 text-sm">
+96|                <Mountain className="h-4 w-4 text-orange-500" />
+97|                Vercors
+98|              </li>
+99|            </ul>
+100|          </div>
+101|
+102|          {/* Contact */}
+103|          <div>
+104|            <h4 className="font-heading text-lg font-bold uppercase tracking-wide mb-4">Contact</h4>
+105|            <ul className="space-y-3">
+106|              <li className="flex items-start gap-2 text-slate-400 text-sm">
+107|                <MapPin className="h-4 w-4 mt-0.5 flex-shrink-0" />
+108|                <span>Grenoble, Isère<br />Auvergne-Rhône-Alpes</span>
+109|              </li>
+110|              <li className="flex items-center gap-2 text-slate-400 text-sm">
+111|                <Mail className="h-4 w-4 flex-shrink-0" />
+112|                contact@les3alpines.fr
+113|              </li>
+114|            </ul>
+115|          </div>
+116|        </div>
+117|
+118|        {/* Bottom Bar */}
+119|        <div className="border-t border-slate-800 mt-12 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
+120|          <p className="text-slate-500 text-sm">
+121|            © 2024 Les 3 Alpines. Tous droits réservés.
+122|          </p>
+123|          <div className="flex items-center gap-6 text-sm">
+124|            <Link to="/mentions-legales" className="text-slate-500 hover:text-white transition-colors">
+125|              Mentions légales
+126|            </Link>
+127|            <Link to="/confidentialite" className="text-slate-500 hover:text-white transition-colors">
+128|              Confidentialité
+129|            </Link>
+130|            <Link to="/contact" className="text-slate-500 hover:text-white transition-colors">
+131|              Contact
+132|            </Link>
+133|          </div>
+134|        </div>
+135|      </div>
+136|    </footer>
+137|  );
+138|};
+139|
+140|export default Footer;
+141|
 
-footer {
-    background-color: #0D1B2A;
-    padding: 30px;
-    text-align: center;
-    font-size: 0.9rem;
-}
-</style>
-</head>
+===END
 
-<body>
+===FILE: /app/frontend/src/components/Layout/Layout.jsx
+/app/frontend/src/components/Layout/Layout.jsx:
+1|import { Navbar } from './Navbar';
+2|import { Footer } from './Footer';
+3|import { Toaster } from 'sonner';
+4|
+5|export const Layout = ({ children }) => {
+6|  return (
+7|    <div className="min-h-screen flex flex-col">
+8|      <Navbar />
+9|      <main className="flex-1 pt-20">
+10|        {children}
+11|      </main>
+12|      <Footer />
+13|      <Toaster position="top-right" richColors />
+14|    </div>
+15|  );
+16|};
+17|
+18|export default Layout;
+19|
 
-<header>
-    <h1>LES 3 ALPINES</h1>
-    <h2>Grenoble. Trois massifs. Une saison.</h2>
-    <button>Découvrir le projet</button>
-</header>
+===END
 
-<section class="section-dark">
-    <h2>Le Projet</h2>
-    <p>
-    Les 3 Alpines est un projet ambitieux basé à Grenoble avec un objectif clair :
-    créer en 2027 le premier championnat amateur de trail structuré autour des
-    trois massifs emblématiques : Chartreuse, Belledonne et Vercors.
-    </p>
-    <p>
-    L’idée est simple : proposer plusieurs courses dans l’année,
-    attribuer des points, créer un classement général et bâtir
-    une véritable communauté locale de traileurs.
-    </p>
-</section>
+Action: {"tool_name": "mcp_view_bulk", "tool_arguments": {"paths": ["/app/frontend/src/pages/Home.jsx", "/app/frontend/src/pages/Championship.jsx", "/app/frontend/src/pages/Races.jsx"], "request_id": "tooluse_XtNnpU0fvoBTJqHHlXyttP"}, "type": "mcp_tool"}
+Observation: ===FILE: /app/frontend/src/pages/Home.jsx
+/app/frontend/src/pages/Home.jsx:
+1|import { useState } from 'react';
+2|import { Link } from 'react-router-dom';
+3|import { ArrowRight, Mountain, Calendar, MapPin, Users, Trophy, Clock, ChevronRight, Mail, Check } from 'lucide-react';
+4|import { toast } from 'sonner';
+5|import axios from 'axios';
+6|
+7|const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+8|const LOGO_URL = "https://customer-assets.emergentagent.com/job_31b4bdc1-bf96-4122-a789-913196646595/artifacts/7501hgx6_Picture%201.png";
+9|
+10|// Images
+11|const HERO_BG = "https://images.unsplash.com/photo-1600818596647-9d5318c20a8a?crop=entropy&cs=srgb&fm=jpg&q=85";
+12|const RACE_IMG = "https://images.unsplash.com/photo-1699959560616-aa17ace76879?crop=entropy&cs=srgb&fm=jpg&q=85";
+13|const CHARTREUSE_IMG = "https://images.unsplash.com/photo-1589966922656-b33b711d9e4d?crop=entropy&cs=srgb&fm=jpg&q=85";
+14|const BELLEDONNE_IMG = "https://images.unsplash.com/photo-1740155945076-f962b0eded15?crop=entropy&cs=srgb&fm=jpg&q=85";
+15|const VERCORS_IMG = "https://images.unsplash.com/photo-1700745286959-8658de43a15c?crop=entropy&cs=srgb&fm=jpg&q=85";
+16|
+17|// Baseline options for the user to choose
+18|const BASELINE_OPTIONS = [
+19|  "3 Massifs • 1 Saison • 1 Légende",
+20|  "Le championnat amateur qui réunit Grenoble",
+21|  "Chartreuse • Belledonne • Vercors — Ta saison trail commence ici"
+22|];
+23|
+24|export const Home = () => {
+25|  const [email, setEmail] = useState('');
+26|  const [isSubmitting, setIsSubmitting] = useState(false);
+27|
+28|  const handleNewsletterSubmit = async (e) => {
+29|    e.preventDefault();
+30|    if (!email) return;
+31|    
+32|    setIsSubmitting(true);
+33|    try {
+34|      const response = await axios.post(`${API}/newsletter`, { email });
+35|      toast.success(response.data.message);
+36|      setEmail('');
+37|    } catch (error) {
+38|      toast.error("Une erreur est survenue. Veuillez réessayer.");
+39|    } finally {
+40|      setIsSubmitting(false);
+41|    }
+42|  };
+43|
+44|  return (
+45|    <div data-testid="home-page">
+46|      {/* Hero Section */}
+47|      <section 
+48|        className="relative min-h-screen flex items-center justify-center"
+49|        style={{
+50|          backgroundImage: `url(${HERO_BG})`,
+51|          backgroundSize: 'cover',
+52|          backgroundPosition: 'center'
+53|        }}
+54|        data-testid="hero-section"
+55|      >
+56|        <div className="absolute inset-0 bg-gradient-to-b from-slate-900/70 via-slate-900/50 to-slate-900/80" />
+57|        
+58|        <div className="relative z-10 text-center px-4 max-w-5xl mx-auto">
+59|          <img 
+60|            src={LOGO_URL} 
+61|            alt="Les 3 Alpines" 
+62|            className="h-24 md:h-32 w-auto mx-auto mb-8 animate-fade-in-up"
+63|            data-testid="hero-logo"
+64|          />
+65|          
+66|          <h1 className="font-heading text-5xl sm:text-6xl md:text-8xl font-black text-white uppercase tracking-tighter mb-6 animate-fade-in-up animation-delay-200">
+67|            L'Aventure<br />Commence Ici
+68|          </h1>
+69|          
+70|          <p className="text-xl md:text-2xl text-white/90 font-light mb-4 animate-fade-in-up animation-delay-400">
+71|            {BASELINE_OPTIONS[0]}
+72|          </p>
+73|          
+74|          <p className="text-slate-300 text-lg mb-10 animate-fade-in-up animation-delay-400">
+75|            Le nouveau rendez-vous trail de Grenoble
+76|          </p>
+77|          
+78|          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 animate-fade-in-up animation-delay-600">
+79|            <Link
+80|              to="/championnat"
+81|              className="inline-flex items-center justify-center rounded-full bg-orange-500 px-8 py-4 text-lg font-bold text-white transition-all hover:bg-orange-600 hover:scale-105"
+82|              data-testid="hero-cta-primary"
+83|            >
+84|              Découvrir le Championnat
+85|              <ArrowRight className="ml-2 h-5 w-5" />
+86|            </Link>
+87|            <Link
+88|              to="/courses"
+89|              className="inline-flex items-center justify-center rounded-full border-2 border-white bg-transparent px-8 py-4 text-lg font-bold text-white transition-all hover:bg-white hover:text-slate-900"
+90|              data-testid="hero-cta-secondary"
+91|            >
+92|              Voir les Courses
+93|            </Link>
+94|          </div>
+95|        </div>
+96|
+97|        {/* Scroll indicator */}
+98|        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 animate-bounce">
+99|          <div className="w-6 h-10 border-2 border-white/50 rounded-full flex items-start justify-center p-2">
+100|            <div className="w-1 h-2 bg-white/50 rounded-full" />
+101|          </div>
+102|        </div>
+103|      </section>
+104|
+105|      {/* Project Section */}
+106|      <section className="py-20 md:py-32 bg-white" data-testid="project-section">
+107|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+108|          <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-center">
+109|            <div>
+110|              <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+111|                Le Projet
+112|              </span>
+113|              <h2 className="font-heading text-4xl md:text-6xl font-bold text-slate-900 uppercase tracking-tight mb-6">
+114|                Un Championnat<br />Amateur Unique
+115|              </h2>
+116|              <p className="text-slate-600 text-lg leading-relaxed mb-6">
+117|                <strong>Les 3 Alpines</strong>, c'est l'ambition de créer le premier championnat amateur de trail autour de Grenoble. Une saison complète de courses sur les trois massifs emblématiques : <span className="text-emerald-600 font-semibold">Chartreuse</span>, <span className="text-sky-600 font-semibold">Belledonne</span> et <span className="text-orange-600 font-semibold">Vercors</span>.
+118|              </p>
+119|              <ul className="space-y-4 mb-8">
+120|                <li className="flex items-start gap-3">
+121|                  <div className="w-6 h-6 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+122|                    <Check className="h-4 w-4 text-orange-500" />
+123|                  </div>
+124|                  <span className="text-slate-700"><strong>Esprit saison</strong> : plusieurs courses, un classement, des points</span>
+125|                </li>
+126|                <li className="flex items-start gap-3">
+127|                  <div className="w-6 h-6 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+128|                    <Check className="h-4 w-4 text-orange-500" />
+129|                  </div>
+130|                  <span className="text-slate-700"><strong>Communauté</strong> : rejoignez une vraie famille de coureurs</span>
+131|                </li>
+132|                <li className="flex items-start gap-3">
+133|                  <div className="w-6 h-6 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+134|                    <Check className="h-4 w-4 text-orange-500" />
+135|                  </div>
+136|                  <span className="text-slate-700"><strong>Accessible</strong> : une expérience premium pour tous les niveaux</span>
+137|                </li>
+138|                <li className="flex items-start gap-3">
+139|                  <div className="w-6 h-6 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+140|                    <Check className="h-4 w-4 text-orange-500" />
+141|                  </div>
+142|                  <span className="text-slate-700"><strong>Ambition</strong> : devenir LA référence du trail amateur local</span>
+143|                </li>
+144|              </ul>
+145|            </div>
+146|            
+147|            <div className="relative">
+148|              <div className="aspect-[4/3] overflow-hidden">
+149|                <img 
+150|                  src={RACE_IMG}
+151|                  alt="Trail running in the Alps"
+152|                  className="w-full h-full object-cover"
+153|                />
+154|              </div>
+155|              {/* Objective badge */}
+156|              <div className="absolute -bottom-6 -left-6 md:-left-12 bg-slate-900 text-white p-6 md:p-8 max-w-xs">
+157|                <span className="text-orange-500 font-bold text-sm uppercase tracking-widest block mb-2">
+158|                  Objectif
+159|                </span>
+160|                <p className="font-heading text-2xl md:text-3xl font-bold uppercase">
+161|                  2027 : Lancement officiel du championnat
+162|                </p>
+163|              </div>
+164|            </div>
+165|          </div>
+166|        </div>
+167|      </section>
+168|
+169|      {/* First Race Section */}
+170|      <section className="py-20 md:py-32 bg-slate-50" data-testid="race-section">
+171|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+172|          <div className="text-center mb-12">
+173|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+174|              Première Course
+175|            </span>
+176|            <h2 className="font-heading text-4xl md:text-6xl font-bold text-slate-900 uppercase tracking-tight">
+177|              Les 3 Alpines — Bastille
+178|            </h2>
+179|          </div>
+180|
+181|          <div className="bg-white border-b-4 border-orange-500 overflow-hidden">
+182|            <div className="grid lg:grid-cols-2">
+183|              <div 
+184|                className="aspect-video lg:aspect-auto bg-cover bg-center min-h-[300px]"
+185|                style={{ backgroundImage: `url(${BELLEDONNE_IMG})` }}
+186|              />
+187|              <div className="p-8 md:p-12 flex flex-col justify-center">
+188|                <div className="inline-flex items-center gap-2 bg-orange-100 text-orange-600 px-4 py-2 text-sm font-bold uppercase tracking-wide mb-6 w-fit">
+189|                  <Trophy className="h-4 w-4" />
+190|                  Course Signature
+191|                </div>
+192|                
+193|                <h3 className="font-heading text-3xl md:text-4xl font-bold text-slate-900 uppercase mb-4">
+194|                  Grenoble → Bastille
+195|                </h3>
+196|                
+197|                <p className="text-slate-600 mb-6 leading-relaxed">
+198|                  Une course accessible mais intense, au cœur de Grenoble. Partez des quais de l'Isère et grimpez jusqu'à la Bastille pour une vue imprenable sur les trois massifs.
+199|                </p>
+200|
+201|                <div className="grid grid-cols-3 gap-4 mb-8">
+202|                  <div className="text-center p-4 bg-slate-50">
+203|                    <MapPin className="h-5 w-5 mx-auto mb-2 text-orange-500" />
+204|                    <p className="font-heading text-2xl font-bold text-slate-900">~10</p>
+205|                    <p className="text-slate-500 text-sm">km</p>
+206|                  </div>
+207|                  <div className="text-center p-4 bg-slate-50">
+208|                    <Mountain className="h-5 w-5 mx-auto mb-2 text-orange-500" />
+209|                    <p className="font-heading text-2xl font-bold text-slate-900">~500</p>
+210|                    <p className="text-slate-500 text-sm">D+</p>
+211|                  </div>
+212|                  <div className="text-center p-4 bg-slate-50">
+213|                    <Calendar className="h-5 w-5 mx-auto mb-2 text-orange-500" />
+214|                    <p className="font-heading text-2xl font-bold text-slate-900">2026</p>
+215|                    <p className="text-slate-500 text-sm">Date TBA</p>
+216|                  </div>
+217|                </div>
+218|
+219|                <div className="flex flex-col sm:flex-row gap-4">
+220|                  <a
+221|                    href="#inscription"
+222|                    className="inline-flex items-center justify-center rounded-full bg-orange-500 px-8 py-4 text-lg font-bold text-white transition-all hover:bg-orange-600 hover:scale-105"
+223|                    data-testid="race-signup-btn"
+224|                  >
+225|                    S'inscrire
+226|                    <ArrowRight className="ml-2 h-5 w-5" />
+227|                  </a>
+228|                  <Link
+229|                    to="/courses"
+230|                    className="inline-flex items-center justify-center rounded-full border-2 border-slate-900 bg-transparent px-8 py-4 text-lg font-bold text-slate-900 transition-all hover:bg-slate-900 hover:text-white"
+231|                    data-testid="race-info-btn"
+232|                  >
+233|                    Infos course
+234|                  </Link>
+235|                </div>
+236|              </div>
+237|            </div>
+238|          </div>
+239|        </div>
+240|      </section>
+241|
+242|      {/* Timeline Section */}
+243|      <section className="py-20 md:py-32 bg-white" data-testid="timeline-section">
+244|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+245|          <div className="text-center mb-16">
+246|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+247|              Roadmap
+248|            </span>
+249|            <h2 className="font-heading text-4xl md:text-6xl font-bold text-slate-900 uppercase tracking-tight">
+250|              Les Prochaines Étapes
+251|            </h2>
+252|          </div>
+253|
+254|          <div className="relative">
+255|            {/* Timeline line */}
+256|            <div className="hidden md:block absolute left-1/2 top-0 bottom-0 w-0.5 bg-gradient-to-b from-sky-500 via-emerald-500 to-orange-500" />
+257|            
+258|            <div className="space-y-12 md:space-y-0">
+259|              {/* 2026 */}
+260|              <div className="relative md:grid md:grid-cols-2 md:gap-8 items-center">
+261|                <div className="md:text-right md:pr-12">
+262|                  <div className="bg-slate-50 p-8 inline-block md:text-right">
+263|                    <span className="font-heading text-6xl md:text-7xl font-black text-sky-500">2026</span>
+264|                    <h3 className="font-heading text-2xl font-bold text-slate-900 uppercase mt-2">Le Lancement</h3>
+265|                    <p className="text-slate-600 mt-2">Première édition de la course Bastille. Création de la communauté Les 3 Alpines.</p>
+266|                  </div>
+267|                </div>
+268|                <div className="hidden md:flex items-center justify-start pl-12">
+269|                  <div className="w-4 h-4 rounded-full bg-sky-500 absolute left-1/2 -translate-x-1/2" />
+270|                </div>
+271|              </div>
+272|
+273|              {/* 2027 */}
+274|              <div className="relative md:grid md:grid-cols-2 md:gap-8 items-center">
+275|                <div className="hidden md:block" />
+276|                <div className="md:pl-12">
+277|                  <div className="bg-orange-50 p-8 inline-block border-l-4 border-orange-500">
+278|                    <span className="font-heading text-6xl md:text-7xl font-black text-orange-500">2027</span>
+279|                    <h3 className="font-heading text-2xl font-bold text-slate-900 uppercase mt-2">Le Championnat</h3>
+280|                    <p className="text-slate-600 mt-2">Lancement officiel du championnat amateur. Saison complète sur les 3 massifs avec classement et maillots distinctifs.</p>
+281|                  </div>
+282|                </div>
+283|                <div className="hidden md:block w-4 h-4 rounded-full bg-orange-500 absolute left-1/2 -translate-x-1/2" />
+284|              </div>
+285|
+286|              {/* 2028 */}
+287|              <div className="relative md:grid md:grid-cols-2 md:gap-8 items-center">
+288|                <div className="md:text-right md:pr-12">
+289|                  <div className="bg-slate-50 p-8 inline-block md:text-right">
+290|                    <span className="font-heading text-6xl md:text-7xl font-black text-emerald-500">2028</span>
+291|                    <h3 className="font-heading text-2xl font-bold text-slate-900 uppercase mt-2">L'Expansion</h3>
+292|                    <p className="text-slate-600 mt-2">Extension du circuit, nouvelles courses, partenariats régionaux et développement de la communauté.</p>
+293|                  </div>
+294|                </div>
+295|                <div className="hidden md:flex items-center justify-start pl-12">
+296|                  <div className="w-4 h-4 rounded-full bg-emerald-500 absolute left-1/2 -translate-x-1/2" />
+297|                </div>
+298|              </div>
+299|            </div>
+300|          </div>
+301|        </div>
+302|      </section>
+303|
+304|      {/* Why Join Section */}
+305|      <section className="py-20 md:py-32 bg-slate-900 text-white" data-testid="why-join-section">
+306|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+307|          <div className="text-center mb-16">
+308|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+309|              Avantages
+310|            </span>
+311|            <h2 className="font-heading text-4xl md:text-6xl font-bold text-white uppercase tracking-tight">
+312|              Pourquoi Rejoindre<br />Les 3 Alpines ?
+313|            </h2>
+314|          </div>
+315|
+316|          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+317|            <div className="bg-slate-800/50 p-8 border-t-4 border-sky-500 hover:bg-slate-800 transition-colors">
+318|              <Users className="h-10 w-10 text-sky-500 mb-4" />
+319|              <h3 className="font-heading text-xl font-bold uppercase mb-2">Communauté</h3>
+320|              <p className="text-slate-400 text-sm leading-relaxed">
+321|                Rejoignez une vraie famille de traileurs passionnés. Entraînements, sorties, événements.
+322|              </p>
+323|            </div>
+324|            
+325|            <div className="bg-slate-800/50 p-8 border-t-4 border-emerald-500 hover:bg-slate-800 transition-colors">
+326|              <Trophy className="h-10 w-10 text-emerald-500 mb-4" />
+327|              <h3 className="font-heading text-xl font-bold uppercase mb-2">Compétition</h3>
+328|              <p className="text-slate-400 text-sm leading-relaxed">
+329|                Un vrai championnat avec points, classement et maillots distinctifs. Accessible mais sérieux.
+330|              </p>
+331|            </div>
+332|            
+333|            <div className="bg-slate-800/50 p-8 border-t-4 border-orange-500 hover:bg-slate-800 transition-colors">
+334|              <Mountain className="h-10 w-10 text-orange-500 mb-4" />
+335|              <h3 className="font-heading text-xl font-bold uppercase mb-2">3 Massifs</h3>
+336|              <p className="text-slate-400 text-sm leading-relaxed">
+337|                Découvrez ou redécouvrez Chartreuse, Belledonne et Vercors à travers nos parcours uniques.
+338|              </p>
+339|            </div>
+340|            
+341|            <div className="bg-slate-800/50 p-8 border-t-4 border-white hover:bg-slate-800 transition-colors">
+342|              <Clock className="h-10 w-10 text-white mb-4" />
+343|              <h3 className="font-heading text-xl font-bold uppercase mb-2">Expérience</h3>
+344|              <p className="text-slate-400 text-sm leading-relaxed">
+345|                Une organisation professionnelle, des parcours balisés, des ravitaillements de qualité.
+346|              </p>
+347|            </div>
+348|          </div>
+349|        </div>
+350|      </section>
+351|
+352|      {/* Massifs Preview */}
+353|      <section className="py-20 md:py-32 bg-white" data-testid="massifs-preview-section">
+354|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+355|          <div className="text-center mb-16">
+356|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+357|              Nos Terrains de Jeu
+358|            </span>
+359|            <h2 className="font-heading text-4xl md:text-6xl font-bold text-slate-900 uppercase tracking-tight">
+360|              Les 3 Massifs
+361|            </h2>
+362|          </div>
+363|
+364|          <div className="grid md:grid-cols-3 gap-6">
+365|            {/* Chartreuse */}
+366|            <Link to="/massifs" className="group relative aspect-[3/4] overflow-hidden">
+367|              <img 
+368|                src={CHARTREUSE_IMG}
+369|                alt="Chartreuse"
+370|                className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+371|              />
+372|              <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/30 to-transparent" />
+373|              <div className="absolute bottom-0 left-0 right-0 p-6">
+374|                <span className="inline-block bg-emerald-500 text-white text-xs font-bold uppercase tracking-wider px-3 py-1 mb-3">
+375|                  Chartreuse
+376|                </span>
+377|                <h3 className="font-heading text-3xl font-bold text-white uppercase">La Mystique</h3>
+378|                <p className="text-white/70 text-sm mt-2">Forêts profondes et monastère silencieux</p>
+379|              </div>
+380|            </Link>
+381|
+382|            {/* Belledonne */}
+383|            <Link to="/massifs" className="group relative aspect-[3/4] overflow-hidden">
+384|              <img 
+385|                src={BELLEDONNE_IMG}
+386|                alt="Belledonne"
+387|                className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+388|              />
+389|              <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/30 to-transparent" />
+390|              <div className="absolute bottom-0 left-0 right-0 p-6">
+391|                <span className="inline-block bg-sky-500 text-white text-xs font-bold uppercase tracking-wider px-3 py-1 mb-3">
+392|                  Belledonne
+393|                </span>
+394|                <h3 className="font-heading text-3xl font-bold text-white uppercase">La Sauvage</h3>
+395|                <p className="text-white/70 text-sm mt-2">Crêtes acérées et lacs d'altitude</p>
+396|              </div>
+397|            </Link>
+398|
+399|            {/* Vercors */}
+400|            <Link to="/massifs" className="group relative aspect-[3/4] overflow-hidden">
+401|              <img 
+402|                src={VERCORS_IMG}
+403|                alt="Vercors"
+404|                className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+405|              />
+406|              <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/30 to-transparent" />
+407|              <div className="absolute bottom-0 left-0 right-0 p-6">
+408|                <span className="inline-block bg-orange-500 text-white text-xs font-bold uppercase tracking-wider px-3 py-1 mb-3">
+409|                  Vercors
+410|                </span>
+411|                <h3 className="font-heading text-3xl font-bold text-white uppercase">La Forteresse</h3>
+412|                <p className="text-white/70 text-sm mt-2">Falaises imposantes et plateaux secrets</p>
+413|              </div>
+414|            </Link>
+415|          </div>
+416|
+417|          <div className="text-center mt-12">
+418|            <Link
+419|              to="/massifs"
+420|              className="inline-flex items-center gap-2 text-slate-900 font-bold hover:text-orange-500 transition-colors"
+421|              data-testid="massifs-link"
+422|            >
+423|              Découvrir tous les massifs
+424|              <ChevronRight className="h-5 w-5" />
+425|            </Link>
+426|          </div>
+427|        </div>
+428|      </section>
+429|
+430|      {/* Partners Section */}
+431|      <section className="py-20 md:py-32 bg-slate-50" data-testid="partners-section">
+432|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+433|          <div className="grid lg:grid-cols-2 gap-12 items-center">
+434|            <div>
+435|              <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+436|                Partenaires
+437|              </span>
+438|              <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight mb-6">
+439|                Devenez Partenaire<br />Des 3 Alpines
+440|              </h2>
+441|              <p className="text-slate-600 text-lg leading-relaxed mb-6">
+442|                Associez votre marque à un projet sportif innovant et local. Visibilité, valeurs et communauté engagée.
+443|              </p>
+444|              <ul className="space-y-3 mb-8">
+445|                <li className="flex items-center gap-3 text-slate-700">
+446|                  <Check className="h-5 w-5 text-orange-500" />
+447|                  Visibilité sur tous nos événements
+448|                </li>
+449|                <li className="flex items-center gap-3 text-slate-700">
+450|                  <Check className="h-5 w-5 text-orange-500" />
+451|                  Présence sur nos supports digitaux
+452|                </li>
+453|                <li className="flex items-center gap-3 text-slate-700">
+454|                  <Check className="h-5 w-5 text-orange-500" />
+455|                  Accès privilégié à notre communauté
+456|                </li>
+457|              </ul>
+458|              <Link
+459|                to="/partenaires"
+460|                className="inline-flex items-center justify-center rounded-full bg-orange-500 px-8 py-4 text-lg font-bold text-white transition-all hover:bg-orange-600 hover:scale-105"
+461|                data-testid="partners-cta"
+462|              >
+463|                Découvrir nos packs
+464|                <ArrowRight className="ml-2 h-5 w-5" />
+465|              </Link>
+466|            </div>
+467|            
+468|            <div className="grid grid-cols-2 gap-4">
+469|              <div className="bg-white p-8 flex items-center justify-center border border-slate-200">
+470|                <span className="text-slate-300 font-heading text-xl font-bold uppercase">Partenaire 1</span>
+471|              </div>
+472|              <div className="bg-white p-8 flex items-center justify-center border border-slate-200">
+473|                <span className="text-slate-300 font-heading text-xl font-bold uppercase">Partenaire 2</span>
+474|              </div>
+475|              <div className="bg-white p-8 flex items-center justify-center border border-slate-200">
+476|                <span className="text-slate-300 font-heading text-xl font-bold uppercase">Partenaire 3</span>
+477|              </div>
+478|              <div className="bg-white p-8 flex items-center justify-center border border-slate-200">
+479|                <span className="text-slate-300 font-heading text-xl font-bold uppercase">Partenaire 4</span>
+480|              </div>
+481|            </div>
+482|          </div>
+483|        </div>
+484|      </section>
+485|
+486|      {/* Newsletter Section */}
+487|      <section className="py-20 md:py-32 bg-slate-900" data-testid="newsletter-section">
+488|        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+489|          <Mail className="h-12 w-12 text-orange-500 mx-auto mb-6" />
+490|          <h2 className="font-heading text-4xl md:text-5xl font-bold text-white uppercase tracking-tight mb-4">
+491|            Restez Informé
+492|          </h2>
+493|          <p className="text-slate-400 text-lg mb-8">
+494|            Inscrivez-vous à notre newsletter pour recevoir les dernières actualités, dates de courses et informations exclusives.
+495|          </p>
+496|          
+497|          <form onSubmit={handleNewsletterSubmit} className="flex flex-col sm:flex-row gap-4 max-w-lg mx-auto">
+498|            <input
+499|              type="email"
+500|              value={email}
+501|              onChange={(e) => setEmail(e.target.value)}
+502|              placeholder="Votre adresse email"
+503|              className="flex-1 h-14 px-6 bg-white/10 border border-white/20 text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500"
+504|              required
+505|              data-testid="newsletter-email-input"
+506|            />
+507|            <button
+508|              type="submit"
+509|              disabled={isSubmitting}
+510|              className="inline-flex items-center justify-center rounded-full bg-orange-500 px-8 py-4 text-lg font-bold text-white transition-all hover:bg-orange-600 disabled:opacity-50"
+511|              data-testid="newsletter-submit-btn"
+512|            >
+513|              {isSubmitting ? 'Envoi...' : "S'inscrire"}
+514|            </button>
+515|          </form>
+516|        </div>
+517|      </section>
+518|
+519|      {/* FAQ Preview */}
+520|      <section className="py-20 md:py-32 bg-white" data-testid="faq-preview-section">
+521|        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+522|          <div className="text-center mb-12">
+523|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+524|              FAQ
+525|            </span>
+526|            <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight">
+527|              Questions Fréquentes
+528|            </h2>
+529|          </div>
+530|
+531|          <div className="space-y-4">
+532|            <div className="border border-slate-200 p-6">
+533|              <h3 className="font-heading text-xl font-bold text-slate-900 mb-2">
+534|                Qui peut participer aux courses Les 3 Alpines ?
+535|              </h3>
+536|              <p className="text-slate-600">
+537|                Nos courses sont ouvertes à tous les traileurs amateurs, du débutant au confirmé. Certaines courses auront des formats adaptés à différents niveaux.
+538|              </p>
+539|            </div>
+540|            
+541|            <div className="border border-slate-200 p-6">
+542|              <h3 className="font-heading text-xl font-bold text-slate-900 mb-2">
+543|                Comment fonctionne le championnat ?
+544|              </h3>
+545|              <p className="text-slate-600">
+546|                Le championnat 2027 comprendra plusieurs courses sur la saison. Chaque participation rapporte des points selon votre classement. Le cumul des points détermine le classement général.
+547|              </p>
+548|            </div>
+549|            
+550|            <div className="border border-slate-200 p-6">
+551|              <h3 className="font-heading text-xl font-bold text-slate-900 mb-2">
+552|                Quand auront lieu les premières courses ?
+553|              </h3>
+554|              <p className="text-slate-600">
+555|                La première course "Bastille" est prévue pour 2026. Le championnat complet débutera en 2027. Inscrivez-vous à la newsletter pour être informé des dates exactes.
+556|              </p>
+557|            </div>
+558|          </div>
+559|
+560|          <div className="text-center mt-8">
+561|            <Link
+562|              to="/contact"
+563|              className="inline-flex items-center gap-2 text-slate-900 font-bold hover:text-orange-500 transition-colors"
+564|              data-testid="faq-link"
+565|            >
+566|              Voir toutes les questions
+567|              <ChevronRight className="h-5 w-5" />
+568|            </Link>
+569|          </div>
+570|        </div>
+571|      </section>
+572|    </div>
+573|  );
+574|};
+575|
+576|export default Home;
+577|
 
-<section class="section-light">
-    <h2>Objectif 2027 : Le Championnat</h2>
-    <p>
-    Une saison complète. Plusieurs courses. Un classement.
-    Des maillots distinctifs.
-    Une expérience inspirée du sport professionnel,
-    adaptée aux passionnés amateurs.
-    </p>
-</section>
+===END
 
-<section class="section-dark">
-    <h2>Première Course</h2>
-    <h3>Les 3 Alpines – Bastille</h3>
-    <p>
-    Course signature au départ de Grenoble,
-    reliant la ville à la Bastille.
-    Un format accessible mais intense,
-    pensé pour rassembler débutants ambitieux et coureurs confirmés.
-    </p>
-    <button>S'inscrire bientôt</button>
-</section>
+===FILE: /app/frontend/src/pages/Championship.jsx
+/app/frontend/src/pages/Championship.jsx:
+1|import { useState } from 'react';
+2|import { Link } from 'react-router-dom';
+3|import { ArrowRight, Trophy, Users, Mountain, Calendar, Award, Target, Star, Medal, ChevronDown, Mail } from 'lucide-react';
+4|import { toast } from 'sonner';
+5|import axios from 'axios';
+6|
+7|const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+8|
+9|const HERO_BG = "https://images.unsplash.com/photo-1699959560616-aa17ace76879?crop=entropy&cs=srgb&fm=jpg&q=85";
+10|
+11|export const Championship = () => {
+12|  const [email, setEmail] = useState('');
+13|  const [isSubmitting, setIsSubmitting] = useState(false);
+14|
+15|  const handleNewsletterSubmit = async (e) => {
+16|    e.preventDefault();
+17|    if (!email) return;
+18|    
+19|    setIsSubmitting(true);
+20|    try {
+21|      const response = await axios.post(`${API}/newsletter`, { email });
+22|      toast.success(response.data.message);
+23|      setEmail('');
+24|    } catch (error) {
+25|      toast.error("Une erreur est survenue. Veuillez réessayer.");
+26|    } finally {
+27|      setIsSubmitting(false);
+28|    }
+29|  };
+30|
+31|  return (
+32|    <div data-testid="championship-page">
+33|      {/* Hero */}
+34|      <section 
+35|        className="relative min-h-[60vh] flex items-center justify-center"
+36|        style={{
+37|          backgroundImage: `url(${HERO_BG})`,
+38|          backgroundSize: 'cover',
+39|          backgroundPosition: 'center'
+40|        }}
+41|      >
+42|        <div className="absolute inset-0 bg-gradient-to-b from-slate-900/70 to-slate-900/90" />
+43|        <div className="relative z-10 text-center px-4 max-w-4xl mx-auto">
+44|          <span className="inline-block bg-orange-500 text-white text-sm font-bold uppercase tracking-wider px-4 py-2 mb-6">
+45|            Lancement 2027
+46|          </span>
+47|          <h1 className="font-heading text-5xl sm:text-6xl md:text-7xl font-black text-white uppercase tracking-tighter mb-6">
+48|            Le Championnat<br />Les 3 Alpines
+49|          </h1>
+50|          <p className="text-xl text-white/80">
+51|            Le premier championnat amateur de trail autour de Grenoble
+52|          </p>
+53|        </div>
+54|      </section>
+55|
+56|      {/* Concept Section */}
+57|      <section className="py-20 md:py-32 bg-white" data-testid="concept-section">
+58|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+59|          <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-center">
+60|            <div>
+61|              <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+62|                Le Concept
+63|              </span>
+64|              <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight mb-6">
+65|                Une Saison Complète<br />Sur 3 Massifs
+66|              </h2>
+67|              <p className="text-slate-600 text-lg leading-relaxed mb-6">
+68|                Le Championnat Les 3 Alpines, c'est une série de courses réparties sur toute la saison, permettant aux participants de découvrir les trois massifs emblématiques de Grenoble tout en cumulant des points au classement général.
+69|              </p>
+70|              <p className="text-slate-600 text-lg leading-relaxed mb-8">
+71|                Chaque course compte pour le classement. Plus vous participez, plus vous marquez de points. À la fin de la saison, les meilleurs traileurs seront récompensés lors d'une cérémonie spéciale.
+72|              </p>
+73|              
+74|              <div className="grid grid-cols-3 gap-4">
+75|                <div className="text-center p-4 bg-slate-50 border-t-4 border-emerald-500">
+76|                  <Mountain className="h-8 w-8 mx-auto mb-2 text-emerald-500" />
+77|                  <p className="font-heading text-lg font-bold text-slate-900">Chartreuse</p>
+78|                </div>
+79|                <div className="text-center p-4 bg-slate-50 border-t-4 border-sky-500">
+80|                  <Mountain className="h-8 w-8 mx-auto mb-2 text-sky-500" />
+81|                  <p className="font-heading text-lg font-bold text-slate-900">Belledonne</p>
+82|                </div>
+83|                <div className="text-center p-4 bg-slate-50 border-t-4 border-orange-500">
+84|                  <Mountain className="h-8 w-8 mx-auto mb-2 text-orange-500" />
+85|                  <p className="font-heading text-lg font-bold text-slate-900">Vercors</p>
+86|                </div>
+87|              </div>
+88|            </div>
+89|            
+90|            <div className="space-y-6">
+91|              <div className="bg-slate-50 p-8 border-l-4 border-orange-500">
+92|                <div className="flex items-start gap-4">
+93|                  <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
+94|                    <Target className="h-6 w-6 text-orange-500" />
+95|                  </div>
+96|                  <div>
+97|                    <h3 className="font-heading text-xl font-bold text-slate-900 uppercase mb-2">Système de Points</h3>
+98|                    <p className="text-slate-600">Chaque course attribue des points selon votre classement. Premier = 100pts, et ainsi de suite. Bonus pour participation à plusieurs courses.</p>
+99|                  </div>
+100|                </div>
+101|              </div>
+102|              
+103|              <div className="bg-slate-50 p-8 border-l-4 border-sky-500">
+104|                <div className="flex items-start gap-4">
+105|                  <div className="w-12 h-12 bg-sky-100 rounded-full flex items-center justify-center flex-shrink-0">
+106|                    <Trophy className="h-6 w-6 text-sky-500" />
+107|                  </div>
+108|                  <div>
+109|                    <h3 className="font-heading text-xl font-bold text-slate-900 uppercase mb-2">Classement Général</h3>
+110|                    <p className="text-slate-600">Cumul de vos meilleurs résultats sur la saison. Classements séparés hommes/femmes et par catégories d'âge.</p>
+111|                  </div>
+112|                </div>
+113|              </div>
+114|              
+115|              <div className="bg-slate-50 p-8 border-l-4 border-emerald-500">
+116|                <div className="flex items-start gap-4">
+117|                  <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center flex-shrink-0">
+118|                    <Award className="h-6 w-6 text-emerald-500" />
+119|                  </div>
+120|                  <div>
+121|                    <h3 className="font-heading text-xl font-bold text-slate-900 uppercase mb-2">Récompenses</h3>
+122|                    <p className="text-slate-600">Maillots distinctifs, lots partenaires, invitations aux événements spéciaux et reconnaissance de la communauté.</p>
+123|                  </div>
+124|                </div>
+125|              </div>
+126|            </div>
+127|          </div>
+128|        </div>
+129|      </section>
+130|
+131|      {/* Categories Section */}
+132|      <section className="py-20 md:py-32 bg-slate-50" data-testid="categories-section">
+133|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+134|          <div className="text-center mb-16">
+135|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+136|              Catégories
+137|            </span>
+138|            <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight">
+139|              Classements & Catégories
+140|            </h2>
+141|          </div>
+142|
+143|          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+144|            <div className="bg-white p-8 text-center border border-slate-200 hover:border-orange-500 transition-colors">
+145|              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+146|                <Users className="h-8 w-8 text-blue-600" />
+147|              </div>
+148|              <h3 className="font-heading text-xl font-bold text-slate-900 uppercase mb-2">Hommes</h3>
+149|              <p className="text-slate-600 text-sm">Classement général masculin toutes catégories d'âge confondues</p>
+150|            </div>
+151|            
+152|            <div className="bg-white p-8 text-center border border-slate-200 hover:border-orange-500 transition-colors">
+153|              <div className="w-16 h-16 bg-pink-100 rounded-full flex items-center justify-center mx-auto mb-4">
+154|                <Users className="h-8 w-8 text-pink-600" />
+155|              </div>
+156|              <h3 className="font-heading text-xl font-bold text-slate-900 uppercase mb-2">Femmes</h3>
+157|              <p className="text-slate-600 text-sm">Classement général féminin toutes catégories d'âge confondues</p>
+158|            </div>
+159|            
+160|            <div className="bg-white p-8 text-center border border-slate-200 hover:border-orange-500 transition-colors">
+161|              <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+162|                <Users className="h-8 w-8 text-emerald-600" />
+163|              </div>
+164|              <h3 className="font-heading text-xl font-bold text-slate-900 uppercase mb-2">Équipes</h3>
+165|              <p className="text-slate-600 text-sm">Classement par équipes (3 coureurs min.) avec cumul des points</p>
+166|            </div>
+167|            
+168|            <div className="bg-white p-8 text-center border border-slate-200 hover:border-orange-500 transition-colors">
+169|              <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+170|                <Calendar className="h-8 w-8 text-orange-600" />
+171|              </div>
+172|              <h3 className="font-heading text-xl font-bold text-slate-900 uppercase mb-2">Par Âge</h3>
+173|              <p className="text-slate-600 text-sm">Catégories : 18-29, 30-39, 40-49, 50-59, 60+</p>
+174|            </div>
+175|          </div>
+176|        </div>
+177|      </section>
+178|
+179|      {/* Jerseys Section */}
+180|      <section className="py-20 md:py-32 bg-white" data-testid="jerseys-section">
+181|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+182|          <div className="text-center mb-16">
+183|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+184|              Maillots Distinctifs
+185|            </span>
+186|            <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight">
+187|              Les Maillots du Championnat
+188|            </h2>
+189|            <p className="text-slate-600 mt-4 max-w-2xl mx-auto">
+190|              Comme dans les grands tours cyclistes, les leaders de chaque classement porteront un maillot distinctif
+191|            </p>
+192|          </div>
+193|
+194|          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
+195|            {/* Maillot Leader */}
+196|            <div className="text-center group">
+197|              <div className="relative aspect-square bg-gradient-to-br from-yellow-300 to-yellow-500 mb-6 flex items-center justify-center overflow-hidden">
+198|                <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMjAgMGwyMCAyMC0yMCAyMEwwIDIweiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDAsMCwwLDAuMSkiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==')] opacity-30" />
+199|                <Trophy className="h-20 w-20 text-yellow-900 relative z-10 group-hover:scale-110 transition-transform" />
+200|              </div>
+201|              <div className="inline-flex items-center gap-2 bg-yellow-400 text-yellow-900 px-4 py-2 font-bold text-sm uppercase tracking-wide mb-3">
+202|                <Star className="h-4 w-4" />
+203|                Leader
+204|              </div>
+205|              <h3 className="font-heading text-2xl font-bold text-slate-900 uppercase">Maillot Jaune</h3>
+206|              <p className="text-slate-600 text-sm mt-2">Leader du classement général</p>
+207|            </div>
+208|
+209|            {/* Maillot Grimpeur */}
+210|            <div className="text-center group">
+211|              <div className="relative aspect-square bg-gradient-to-br from-red-400 to-red-600 mb-6 flex items-center justify-center overflow-hidden">
+212|                <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMjAgMGwyMCAyMC0yMCAyMEwwIDIweiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMikiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==')] opacity-30" />
+213|                <Mountain className="h-20 w-20 text-white relative z-10 group-hover:scale-110 transition-transform" />
+214|              </div>
+215|              <div className="inline-flex items-center gap-2 bg-red-500 text-white px-4 py-2 font-bold text-sm uppercase tracking-wide mb-3">
+216|                <Mountain className="h-4 w-4" />
+217|                Grimpeur
+218|              </div>
+219|              <h3 className="font-heading text-2xl font-bold text-slate-900 uppercase">Maillot Rouge</h3>
+220|              <p className="text-slate-600 text-sm mt-2">Meilleur grimpeur (cumul D+)</p>
+221|            </div>
+222|
+223|            {/* Maillot Descendeur */}
+224|            <div className="text-center group">
+225|              <div className="relative aspect-square bg-gradient-to-br from-sky-400 to-sky-600 mb-6 flex items-center justify-center overflow-hidden">
+226|                <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMjAgMGwyMCAyMC0yMCAyMEwwIDIweiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMikiIHN0cm9rZS13aWR0aD0iMSIvPjwvc3ZnPg==')] opacity-30" />
+227|                <ChevronDown className="h-20 w-20 text-white relative z-10 group-hover:scale-110 transition-transform" />
+228|              </div>
+229|              <div className="inline-flex items-center gap-2 bg-sky-500 text-white px-4 py-2 font-bold text-sm uppercase tracking-wide mb-3">
+230|                <ChevronDown className="h-4 w-4" />
+231|                Descendeur
+232|              </div>
+233|              <h3 className="font-heading text-2xl font-bold text-slate-900 uppercase">Maillot Bleu</h3>
+234|              <p className="text-slate-600 text-sm mt-2">Meilleur descendeur (temps descente)</p>
+235|            </div>
+236|
+237|            {/* Maillot Jeune */}
+238|            <div className="text-center group">
+239|              <div className="relative aspect-square bg-gradient-to-br from-slate-100 to-white mb-6 flex items-center justify-center overflow-hidden border-2 border-slate-200">
+240|                <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cGF0aCBkPSJNMjAgMGwyMCAyMC0yMCAyMEwwIDIweiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJyZ2JhKDAsMCwwLDAuMDUpIiBzdHJva2Utd2lkdGg9IjEiLz48L3N2Zz4=')] opacity-50" />
+241|                <Medal className="h-20 w-20 text-slate-400 relative z-10 group-hover:scale-110 transition-transform" />
+242|              </div>
+243|              <div className="inline-flex items-center gap-2 bg-white text-slate-900 border border-slate-200 px-4 py-2 font-bold text-sm uppercase tracking-wide mb-3">
+244|                <Medal className="h-4 w-4" />
+245|                Jeune
+246|              </div>
+247|              <h3 className="font-heading text-2xl font-bold text-slate-900 uppercase">Maillot Blanc</h3>
+248|              <p className="text-slate-600 text-sm mt-2">Meilleur coureur -25 ans</p>
+249|            </div>
+250|          </div>
+251|        </div>
+252|      </section>
+253|
+254|      {/* Rankings Preview */}
+255|      <section className="py-20 md:py-32 bg-slate-900 text-white" data-testid="rankings-section">
+256|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+257|          <div className="text-center mb-16">
+258|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+259|              Classements
+260|            </span>
+261|            <h2 className="font-heading text-4xl md:text-5xl font-bold text-white uppercase tracking-tight">
+262|              Publication des Résultats
+263|            </h2>
+264|          </div>
+265|
+266|          <div className="grid lg:grid-cols-2 gap-12">
+267|            <div className="bg-slate-800 p-8">
+268|              <h3 className="font-heading text-2xl font-bold uppercase mb-6 flex items-center gap-3">
+269|                <Trophy className="h-6 w-6 text-orange-500" />
+270|                Classement Live
+271|              </h3>
+272|              <p className="text-slate-400 mb-6">
+273|                Pendant les courses, suivez le classement en temps réel sur notre site et application mobile.
+274|              </p>
+275|              <ul className="space-y-3">
+276|                <li className="flex items-center gap-3 text-slate-300">
+277|                  <div className="w-2 h-2 bg-orange-500 rounded-full" />
+278|                  Mise à jour automatique aux points de passage
+279|                </li>
+280|                <li className="flex items-center gap-3 text-slate-300">
+281|                  <div className="w-2 h-2 bg-orange-500 rounded-full" />
+282|                  Temps intermédiaires et écarts
+283|                </li>
+284|                <li className="flex items-center gap-3 text-slate-300">
+285|                  <div className="w-2 h-2 bg-orange-500 rounded-full" />
+286|                  Notifications push pour vos favoris
+287|                </li>
+288|              </ul>
+289|            </div>
+290|            
+291|            <div className="bg-slate-800 p-8">
+292|              <h3 className="font-heading text-2xl font-bold uppercase mb-6 flex items-center gap-3">
+293|                <Award className="h-6 w-6 text-emerald-500" />
+294|                Classement Saison
+295|              </h3>
+296|              <p className="text-slate-400 mb-6">
+297|                Le classement général est mis à jour après chaque course et disponible sur notre plateforme.
+298|              </p>
+299|              <ul className="space-y-3">
+300|                <li className="flex items-center gap-3 text-slate-300">
+301|                  <div className="w-2 h-2 bg-emerald-500 rounded-full" />
+302|                  Classement général et par catégorie
+303|                </li>
+304|                <li className="flex items-center gap-3 text-slate-300">
+305|                  <div className="w-2 h-2 bg-emerald-500 rounded-full" />
+306|                  Historique de vos performances
+307|                </li>
+308|                <li className="flex items-center gap-3 text-slate-300">
+309|                  <div className="w-2 h-2 bg-emerald-500 rounded-full" />
+310|                  Comparaison avec les autres coureurs
+311|                </li>
+312|              </ul>
+313|            </div>
+314|          </div>
+315|        </div>
+316|      </section>
+317|
+318|      {/* Spirit Section */}
+319|      <section className="py-20 md:py-32 bg-white" data-testid="spirit-section">
+320|        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+321|          <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+322|            Notre Philosophie
+323|          </span>
+324|          <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight mb-8">
+325|            Accessible Mais Sérieux
+326|          </h2>
+327|          <p className="text-slate-600 text-xl leading-relaxed mb-8">
+328|            Les 3 Alpines, c'est un championnat structuré et motivant, mais accessible à tous. Pas besoin d'être un ultra-traileur pour participer. Notre objectif : créer une compétition saine et conviviale où chacun peut se dépasser et progresser.
+329|          </p>
+330|          <div className="grid md:grid-cols-3 gap-8 text-left">
+331|            <div className="text-center">
+332|              <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+333|                <Users className="h-8 w-8 text-orange-500" />
+334|              </div>
+335|              <h3 className="font-heading text-lg font-bold text-slate-900 uppercase mb-2">Inclusif</h3>
+336|              <p className="text-slate-600 text-sm">Tous les niveaux sont les bienvenus</p>
+337|            </div>
+338|            <div className="text-center">
+339|              <div className="w-16 h-16 bg-sky-100 rounded-full flex items-center justify-center mx-auto mb-4">
+340|                <Trophy className="h-8 w-8 text-sky-500" />
+341|              </div>
+342|              <h3 className="font-heading text-lg font-bold text-slate-900 uppercase mb-2">Structuré</h3>
+343|              <p className="text-slate-600 text-sm">Organisation professionnelle</p>
+344|            </div>
+345|            <div className="text-center">
+346|              <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+347|                <Star className="h-8 w-8 text-emerald-500" />
+348|              </div>
+349|              <h3 className="font-heading text-lg font-bold text-slate-900 uppercase mb-2">Motivant</h3>
+350|              <p className="text-slate-600 text-sm">Progression et dépassement de soi</p>
+351|            </div>
+352|          </div>
+353|        </div>
+354|      </section>
+355|
+356|      {/* CTA Section */}
+357|      <section className="py-20 md:py-32 bg-slate-50" data-testid="cta-section">
+358|        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+359|          <div className="bg-white border border-slate-200 p-8 md:p-12">
+360|            <div className="grid md:grid-cols-2 gap-8">
+361|              {/* Newsletter */}
+362|              <div className="text-center md:text-left">
+363|                <Mail className="h-10 w-10 text-orange-500 mx-auto md:mx-0 mb-4" />
+364|                <h3 className="font-heading text-2xl font-bold text-slate-900 uppercase mb-3">
+365|                  Être informé du lancement
+366|                </h3>
+367|                <p className="text-slate-600 mb-6">
+368|                  Inscrivez-vous pour recevoir les infos en avant-première
+369|                </p>
+370|                <form onSubmit={handleNewsletterSubmit} className="space-y-4">
+371|                  <input
+372|                    type="email"
+373|                    value={email}
+374|                    onChange={(e) => setEmail(e.target.value)}
+375|                    placeholder="Votre email"
+376|                    className="w-full h-12 px-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+377|                    required
+378|                    data-testid="championship-newsletter-input"
+379|                  />
+380|                  <button
+381|                    type="submit"
+382|                    disabled={isSubmitting}
+383|                    className="w-full inline-flex items-center justify-center rounded-full bg-orange-500 px-6 py-3 font-bold text-white transition-all hover:bg-orange-600 disabled:opacity-50"
+384|                    data-testid="championship-newsletter-btn"
+385|                  >
+386|                    {isSubmitting ? 'Envoi...' : 'Je veux être informé'}
+387|                  </button>
+388|                </form>
+389|              </div>
+390|
+391|              {/* Partner CTA */}
+392|              <div className="text-center md:text-left border-t md:border-t-0 md:border-l border-slate-200 pt-8 md:pt-0 md:pl-8">
+393|                <Trophy className="h-10 w-10 text-emerald-500 mx-auto md:mx-0 mb-4" />
+394|                <h3 className="font-heading text-2xl font-bold text-slate-900 uppercase mb-3">
+395|                  Devenir Partenaire
+396|                </h3>
+397|                <p className="text-slate-600 mb-6">
+398|                  Associez votre marque au championnat
+399|                </p>
+400|                <Link
+401|                  to="/partenaires"
+402|                  className="w-full inline-flex items-center justify-center rounded-full border-2 border-slate-900 bg-transparent px-6 py-3 font-bold text-slate-900 transition-all hover:bg-slate-900 hover:text-white"
+403|                  data-testid="championship-partner-btn"
+404|                >
+405|                  Devenir partenaire
+406|                  <ArrowRight className="ml-2 h-5 w-5" />
+407|                </Link>
+408|              </div>
+409|            </div>
+410|          </div>
+411|        </div>
+412|      </section>
+413|    </div>
+414|  );
+415|};
+416|
+417|export default Championship;
+418|
 
-<footer>
-    © 2026 Les 3 Alpines – Projet trail basé à Grenoble
-</footer>
+===END
 
-</body>
-</html>
+===FILE: /app/frontend/src/pages/Races.jsx
+/app/frontend/src/pages/Races.jsx:
+1|import { Link } from 'react-router-dom';
+2|import { ArrowRight, Mountain, Calendar, MapPin, Clock, Users, Trophy, ChevronRight } from 'lucide-react';
+3|
+4|const BASTILLE_IMG = "https://images.unsplash.com/photo-1740155945076-f962b0eded15?crop=entropy&cs=srgb&fm=jpg&q=85";
+5|const CHARTREUSE_IMG = "https://images.unsplash.com/photo-1589966922656-b33b711d9e4d?crop=entropy&cs=srgb&fm=jpg&q=85";
+6|const BELLEDONNE_IMG = "https://images.unsplash.com/photo-1700745286959-8658de43a15c?crop=entropy&cs=srgb&fm=jpg&q=85";
+7|const VERCORS_IMG = "https://images.unsplash.com/photo-1600818596647-9d5318c20a8a?crop=entropy&cs=srgb&fm=jpg&q=85";
+8|
+9|const races = [
+10|  {
+11|    id: 'bastille',
+12|    name: 'Les 3 Alpines — Bastille',
+13|    subtitle: 'Course Signature',
+14|    image: BASTILLE_IMG,
+15|    date: '2026',
+16|    distance: '~10 km',
+17|    elevation: '~500 D+',
+18|    difficulty: 'Accessible',
+19|    description: 'Partez des quais de l\'Isère et grimpez jusqu\'à la Bastille pour une vue imprenable sur les trois massifs.',
+20|    status: 'upcoming',
+21|    color: 'orange'
+22|  },
+23|  {
+24|    id: 'chartreuse-mystique',
+25|    name: 'La Mystique de Chartreuse',
+26|    subtitle: 'Épreuve Chartreuse',
+27|    image: CHARTREUSE_IMG,
+28|    date: '2027',
+29|    distance: '~25 km',
+30|    elevation: '~1200 D+',
+31|    difficulty: 'Intermédiaire',
+32|    description: 'Traversée des forêts profondes de Chartreuse, au pied du monastère et des sommets calcaires.',
+33|    status: 'planned',
+34|    color: 'emerald'
+35|  },
+36|  {
+37|    id: 'belledonne-sauvage',
+38|    name: 'La Sauvage de Belledonne',
+39|    subtitle: 'Épreuve Belledonne',
+40|    image: BELLEDONNE_IMG,
+41|    date: '2027',
+42|    distance: '~30 km',
+43|    elevation: '~1800 D+',
+44|    difficulty: 'Difficile',
+45|    description: 'Affrontez les crêtes acérées et les lacs d\'altitude de la chaîne de Belledonne.',
+46|    status: 'planned',
+47|    color: 'sky'
+48|  },
+49|  {
+50|    id: 'vercors-forteresse',
+51|    name: 'La Forteresse du Vercors',
+52|    subtitle: 'Épreuve Vercors',
+53|    image: VERCORS_IMG,
+54|    date: '2027',
+55|    distance: '~22 km',
+56|    elevation: '~1400 D+',
+57|    difficulty: 'Intermédiaire',
+58|    description: 'Parcourez les plateaux secrets et les falaises imposantes du massif du Vercors.',
+59|    status: 'planned',
+60|    color: 'orange'
+61|  }
+62|];
+63|
+64|const getStatusBadge = (status) => {
+65|  switch(status) {
+66|    case 'upcoming':
+67|      return { text: 'Prochainement', bg: 'bg-orange-500', textColor: 'text-white' };
+68|    case 'planned':
+69|      return { text: 'Planifié 2027', bg: 'bg-slate-200', textColor: 'text-slate-700' };
+70|    default:
+71|      return { text: 'À venir', bg: 'bg-slate-200', textColor: 'text-slate-700' };
+72|  }
+73|};
+74|
+75|const getColorClasses = (color) => {
+76|  switch(color) {
+77|    case 'emerald':
+78|      return 'border-emerald-500 bg-emerald-500';
+79|    case 'sky':
+80|      return 'border-sky-500 bg-sky-500';
+81|    default:
+82|      return 'border-orange-500 bg-orange-500';
+83|  }
+84|};
+85|
+86|export const Races = () => {
+87|  return (
+88|    <div data-testid="races-page">
+89|      {/* Hero */}
+90|      <section className="bg-slate-900 py-20 md:py-32">
+91|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+92|          <span className="inline-block bg-orange-500 text-white text-sm font-bold uppercase tracking-wider px-4 py-2 mb-6">
+93|            Saison 2026-2027
+94|          </span>
+95|          <h1 className="font-heading text-5xl sm:text-6xl md:text-7xl font-black text-white uppercase tracking-tighter mb-6">
+96|            Nos Courses
+97|          </h1>
+98|          <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+99|            Découvrez les épreuves du Championnat Les 3 Alpines sur les trois massifs emblématiques de Grenoble
+100|          </p>
+101|        </div>
+102|      </section>
+103|
+104|      {/* Featured Race */}
+105|      <section className="py-20 md:py-32 bg-white" data-testid="featured-race-section">
+106|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+107|          <div className="text-center mb-12">
+108|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+109|              Course Signature
+110|            </span>
+111|            <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight">
+112|              Les 3 Alpines — Bastille
+113|            </h2>
+114|          </div>
+115|
+116|          <div className="grid lg:grid-cols-2 gap-0 border-b-4 border-orange-500 overflow-hidden bg-white shadow-xl">
+117|            <div 
+118|              className="aspect-video lg:aspect-auto min-h-[400px] bg-cover bg-center"
+119|              style={{ backgroundImage: `url(${BASTILLE_IMG})` }}
+120|            />
+121|            <div className="p-8 md:p-12 flex flex-col justify-center">
+122|              <div className="flex flex-wrap gap-3 mb-6">
+123|                <span className="inline-flex items-center gap-2 bg-orange-500 text-white px-4 py-2 text-sm font-bold uppercase">
+124|                  <Trophy className="h-4 w-4" />
+125|                  Course Signature
+126|                </span>
+127|                <span className="inline-flex items-center gap-2 bg-emerald-100 text-emerald-700 px-4 py-2 text-sm font-bold">
+128|                  Accessible
+129|                </span>
+130|              </div>
+131|              
+132|              <h3 className="font-heading text-3xl md:text-4xl font-bold text-slate-900 uppercase mb-4">
+133|                Grenoble → Bastille
+134|              </h3>
+135|              
+136|              <p className="text-slate-600 text-lg mb-8 leading-relaxed">
+137|                Une course accessible mais intense, au cœur de Grenoble. Partez des quais de l'Isère et grimpez jusqu'à la Bastille pour une vue imprenable sur les trois massifs. Format idéal pour découvrir l'univers Les 3 Alpines.
+138|              </p>
+139|
+140|              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+141|                <div className="text-center p-4 bg-slate-50">
+142|                  <MapPin className="h-5 w-5 mx-auto mb-2 text-orange-500" />
+143|                  <p className="font-heading text-xl font-bold text-slate-900">~10</p>
+144|                  <p className="text-slate-500 text-sm">km</p>
+145|                </div>
+146|                <div className="text-center p-4 bg-slate-50">
+147|                  <Mountain className="h-5 w-5 mx-auto mb-2 text-orange-500" />
+148|                  <p className="font-heading text-xl font-bold text-slate-900">~500</p>
+149|                  <p className="text-slate-500 text-sm">D+</p>
+150|                </div>
+151|                <div className="text-center p-4 bg-slate-50">
+152|                  <Calendar className="h-5 w-5 mx-auto mb-2 text-orange-500" />
+153|                  <p className="font-heading text-xl font-bold text-slate-900">2026</p>
+154|                  <p className="text-slate-500 text-sm">Date TBA</p>
+155|                </div>
+156|                <div className="text-center p-4 bg-slate-50">
+157|                  <Users className="h-5 w-5 mx-auto mb-2 text-orange-500" />
+158|                  <p className="font-heading text-xl font-bold text-slate-900">200</p>
+159|                  <p className="text-slate-500 text-sm">places</p>
+160|                </div>
+161|              </div>
+162|
+163|              <div className="flex flex-col sm:flex-row gap-4">
+164|                <a
+165|                  href="#inscription"
+166|                  className="inline-flex items-center justify-center rounded-full bg-orange-500 px-8 py-4 text-lg font-bold text-white transition-all hover:bg-orange-600 hover:scale-105"
+167|                  data-testid="bastille-signup-btn"
+168|                >
+169|                  S'inscrire
+170|                  <ArrowRight className="ml-2 h-5 w-5" />
+171|                </a>
+172|                <button
+173|                  className="inline-flex items-center justify-center rounded-full border-2 border-slate-900 bg-transparent px-8 py-4 text-lg font-bold text-slate-900 transition-all hover:bg-slate-900 hover:text-white"
+174|                  data-testid="bastille-info-btn"
+175|                >
+176|                  Détails du parcours
+177|                </button>
+178|              </div>
+179|            </div>
+180|          </div>
+181|        </div>
+182|      </section>
+183|
+184|      {/* Other Races */}
+185|      <section className="py-20 md:py-32 bg-slate-50" data-testid="other-races-section">
+186|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+187|          <div className="text-center mb-12">
+188|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+189|              Championnat 2027
+190|            </span>
+191|            <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight">
+192|              Les Épreuves du Circuit
+193|            </h2>
+194|          </div>
+195|
+196|          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+197|            {races.slice(1).map((race) => {
+198|              const status = getStatusBadge(race.status);
+199|              const colorClass = getColorClasses(race.color);
+200|              
+201|              return (
+202|                <div 
+203|                  key={race.id}
+204|                  className={`bg-white overflow-hidden border-b-4 ${colorClass.split(' ')[0]} hover:shadow-xl transition-all`}
+205|                  data-testid={`race-card-${race.id}`}
+206|                >
+207|                  <div 
+208|                    className="aspect-video bg-cover bg-center relative"
+209|                    style={{ backgroundImage: `url(${race.image})` }}
+210|                  >
+211|                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent" />
+212|                    <div className="absolute bottom-4 left-4">
+213|                      <span className={`${status.bg} ${status.textColor} px-3 py-1 text-xs font-bold uppercase`}>
+214|                        {status.text}
+215|                      </span>
+216|                    </div>
+217|                  </div>
+218|                  
+219|                  <div className="p-6">
+220|                    <p className="text-slate-500 text-sm font-medium mb-2">{race.subtitle}</p>
+221|                    <h3 className="font-heading text-xl font-bold text-slate-900 uppercase mb-3">
+222|                      {race.name}
+223|                    </h3>
+224|                    <p className="text-slate-600 text-sm mb-4 line-clamp-2">
+225|                      {race.description}
+226|                    </p>
+227|                    
+228|                    <div className="grid grid-cols-3 gap-2 mb-4 text-center">
+229|                      <div className="p-2 bg-slate-50">
+230|                        <p className="font-heading font-bold text-slate-900">{race.distance}</p>
+231|                      </div>
+232|                      <div className="p-2 bg-slate-50">
+233|                        <p className="font-heading font-bold text-slate-900">{race.elevation}</p>
+234|                      </div>
+235|                      <div className="p-2 bg-slate-50">
+236|                        <p className="font-heading font-bold text-slate-900">{race.date}</p>
+237|                      </div>
+238|                    </div>
+239|                    
+240|                    <span className={`inline-block px-3 py-1 text-xs font-bold ${
+241|                      race.difficulty === 'Accessible' ? 'bg-emerald-100 text-emerald-700' :
+242|                      race.difficulty === 'Intermédiaire' ? 'bg-yellow-100 text-yellow-700' :
+243|                      'bg-red-100 text-red-700'
+244|                    }`}>
+245|                      {race.difficulty}
+246|                    </span>
+247|                  </div>
+248|                </div>
+249|              );
+250|            })}
+251|          </div>
+252|        </div>
+253|      </section>
+254|
+255|      {/* CTA Section */}
+256|      <section className="py-20 md:py-32 bg-slate-900" data-testid="races-cta-section">
+257|        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+258|          <h2 className="font-heading text-4xl md:text-5xl font-bold text-white uppercase tracking-tight mb-6">
+259|            Prêt pour l'Aventure ?
+260|          </h2>
+261|          <p className="text-slate-400 text-lg mb-8">
+262|            Inscrivez-vous à la newsletter pour être informé des ouvertures d'inscriptions et des actualités du championnat.
+263|          </p>
+264|          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+265|            <Link
+266|              to="/contact"
+267|              className="inline-flex items-center justify-center rounded-full bg-orange-500 px-8 py-4 text-lg font-bold text-white transition-all hover:bg-orange-600 hover:scale-105"
+268|              data-testid="races-newsletter-btn"
+269|            >
+270|              S'inscrire à la newsletter
+271|              <ArrowRight className="ml-2 h-5 w-5" />
+272|            </Link>
+273|            <Link
+274|              to="/championnat"
+275|              className="inline-flex items-center gap-2 text-white font-bold hover:text-orange-500 transition-colors"
+276|            >
+277|              En savoir plus sur le championnat
+278|              <ChevronRight className="h-5 w-5" />
+279|            </Link>
+280|          </div>
+281|        </div>
+282|      </section>
+283|    </div>
+284|  );
+285|};
+286|
+287|export default Races;
+288|
+
+===END
+Action: {"tool_name": "mcp_view_bulk", "tool_arguments": {"paths": ["/app/frontend/src/pages/Massifs.jsx", "/app/frontend/src/pages/Partners.jsx", "/app/frontend/src/pages/Blog.jsx", "/app/frontend/src/pages/Contact.jsx"], "request_id": "tooluse_SB7Cuczw4MbfpzCa6XSiI9"}, "type": "mcp_tool"}
+Observation: ===FILE: /app/frontend/src/pages/Massifs.jsx
+/app/frontend/src/pages/Massifs.jsx:
+1|import { Link } from 'react-router-dom';
+2|import { Mountain, MapPin, ArrowRight, ChevronRight, Compass, TreePine, Waves, Sun } from 'lucide-react';
+3|
+4|const CHARTREUSE_IMG = "https://images.unsplash.com/photo-1589966922656-b33b711d9e4d?crop=entropy&cs=srgb&fm=jpg&q=85";
+5|const BELLEDONNE_IMG = "https://images.unsplash.com/photo-1740155945076-f962b0eded15?crop=entropy&cs=srgb&fm=jpg&q=85";
+6|const VERCORS_IMG = "https://images.unsplash.com/photo-1700745286959-8658de43a15c?crop=entropy&cs=srgb&fm=jpg&q=85";
+7|
+8|const massifs = [
+9|  {
+10|    id: 'chartreuse',
+11|    name: 'Chartreuse',
+12|    nickname: 'La Mystique',
+13|    color: 'emerald',
+14|    image: CHARTREUSE_IMG,
+15|    altitude: '2 082 m',
+16|    highlight: 'Chamechaude',
+17|    description: 'La Chartreuse est un massif préalpin calcaire situé au nord de Grenoble. Réputé pour ses forêts profondes, ses falaises impressionnantes et son monastère historique, c\'est un terrain de jeu idéal pour le trail.',
+18|    characteristics: [
+19|      { icon: TreePine, label: 'Forêts', text: 'Forêts denses d\'épicéas et de hêtres' },
+20|      { icon: Mountain, label: 'Relief', text: 'Falaises calcaires et crêtes aériennes' },
+21|      { icon: Compass, label: 'Ambiance', text: 'Mystique et préservée' },
+22|      { icon: Sun, label: 'Exposition', text: 'Ombragé et frais en été' }
+23|    ],
+24|    races: ['La Mystique de Chartreuse']
+25|  },
+26|  {
+27|    id: 'belledonne',
+28|    name: 'Belledonne',
+29|    nickname: 'La Sauvage',
+30|    color: 'sky',
+31|    image: BELLEDONNE_IMG,
+32|    altitude: '2 977 m',
+33|    highlight: 'Grand Pic',
+34|    description: 'La chaîne de Belledonne s\'étire du nord au sud face à Grenoble. Ses crêtes acérées, ses lacs d\'altitude et son caractère sauvage en font un massif exigeant mais spectaculaire pour les traileurs.',
+35|    characteristics: [
+36|      { icon: Mountain, label: 'Relief', text: 'Crêtes techniques et arêtes rocheuses' },
+37|      { icon: Waves, label: 'Lacs', text: 'Nombreux lacs d\'altitude cristallins' },
+38|      { icon: Compass, label: 'Ambiance', text: 'Sauvage et minérale' },
+39|      { icon: Sun, label: 'Exposition', text: 'Exposé et venteux en altitude' }
+40|    ],
+41|    races: ['La Sauvage de Belledonne']
+42|  },
+43|  {
+44|    id: 'vercors',
+45|    name: 'Vercors',
+46|    nickname: 'La Forteresse',
+47|    color: 'orange',
+48|    image: VERCORS_IMG,
+49|    altitude: '2 341 m',
+50|    highlight: 'Grand Veymont',
+51|    description: 'Le Vercors est un massif calcaire aux plateaux immenses et aux falaises vertigineuses. Surnommé la "Forteresse", il offre des paysages uniques entre forêts, alpages et lapiaz.',
+52|    characteristics: [
+53|      { icon: Mountain, label: 'Relief', text: 'Plateaux et falaises spectaculaires' },
+54|      { icon: TreePine, label: 'Végétation', text: 'Alpages et forêts de pins' },
+55|      { icon: Compass, label: 'Ambiance', text: 'Ouverte et lumineuse' },
+56|      { icon: Sun, label: 'Exposition', text: 'Ensoleillé avec grands espaces' }
+57|    ],
+58|    races: ['La Forteresse du Vercors']
+59|  }
+60|];
+61|
+62|const getColorClasses = (color) => {
+63|  switch(color) {
+64|    case 'emerald':
+65|      return {
+66|        bg: 'bg-emerald-500',
+67|        text: 'text-emerald-500',
+68|        border: 'border-emerald-500',
+69|        light: 'bg-emerald-100'
+70|      };
+71|    case 'sky':
+72|      return {
+73|        bg: 'bg-sky-500',
+74|        text: 'text-sky-500',
+75|        border: 'border-sky-500',
+76|        light: 'bg-sky-100'
+77|      };
+78|    default:
+79|      return {
+80|        bg: 'bg-orange-500',
+81|        text: 'text-orange-500',
+82|        border: 'border-orange-500',
+83|        light: 'bg-orange-100'
+84|      };
+85|  }
+86|};
+87|
+88|export const Massifs = () => {
+89|  return (
+90|    <div data-testid="massifs-page">
+91|      {/* Hero */}
+92|      <section className="bg-slate-900 py-20 md:py-32">
+93|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+94|          <span className="inline-block bg-orange-500 text-white text-sm font-bold uppercase tracking-wider px-4 py-2 mb-6">
+95|            Nos Terrains de Jeu
+96|          </span>
+97|          <h1 className="font-heading text-5xl sm:text-6xl md:text-7xl font-black text-white uppercase tracking-tighter mb-6">
+98|            Les 3 Massifs
+99|          </h1>
+100|          <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+101|            Chartreuse, Belledonne, Vercors — trois massifs uniques, trois ambiances, trois défis
+102|          </p>
+103|        </div>
+104|      </section>
+105|
+106|      {/* Overview */}
+107|      <section className="py-20 bg-white" data-testid="massifs-overview">
+108|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+109|          <div className="grid md:grid-cols-3 gap-6">
+110|            {massifs.map((massif) => {
+111|              const colors = getColorClasses(massif.color);
+112|              return (
+113|                <a 
+114|                  href={`#${massif.id}`}
+115|                  key={massif.id}
+116|                  className="group relative aspect-[4/3] overflow-hidden"
+117|                  data-testid={`massif-preview-${massif.id}`}
+118|                >
+119|                  <img 
+120|                    src={massif.image}
+121|                    alt={massif.name}
+122|                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+123|                  />
+124|                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-slate-900/30 to-transparent" />
+125|                  <div className="absolute bottom-0 left-0 right-0 p-6">
+126|                    <span className={`inline-block ${colors.bg} text-white text-xs font-bold uppercase tracking-wider px-3 py-1 mb-3`}>
+127|                      {massif.nickname}
+128|                    </span>
+129|                    <h3 className="font-heading text-3xl font-bold text-white uppercase">{massif.name}</h3>
+130|                    <p className="text-white/70 text-sm mt-2 flex items-center gap-2">
+131|                      <Mountain className="h-4 w-4" />
+132|                      {massif.altitude} — {massif.highlight}
+133|                    </p>
+134|                  </div>
+135|                </a>
+136|              );
+137|            })}
+138|          </div>
+139|        </div>
+140|      </section>
+141|
+142|      {/* Detailed Sections */}
+143|      {massifs.map((massif, index) => {
+144|        const colors = getColorClasses(massif.color);
+145|        const isEven = index % 2 === 0;
+146|        
+147|        return (
+148|          <section 
+149|            key={massif.id}
+150|            id={massif.id}
+151|            className={`py-20 md:py-32 ${isEven ? 'bg-slate-50' : 'bg-white'}`}
+152|            data-testid={`massif-section-${massif.id}`}
+153|          >
+154|            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+155|              <div className={`grid lg:grid-cols-2 gap-12 lg:gap-20 items-center ${isEven ? '' : 'lg:flex-row-reverse'}`}>
+156|                <div className={isEven ? 'order-1' : 'order-1 lg:order-2'}>
+157|                  <span className={`${colors.text} font-bold text-sm uppercase tracking-widest mb-4 block`}>
+158|                    {massif.nickname}
+159|                  </span>
+160|                  <h2 className="font-heading text-4xl md:text-6xl font-bold text-slate-900 uppercase tracking-tight mb-6">
+161|                    {massif.name}
+162|                  </h2>
+163|                  <div className="flex items-center gap-4 mb-6">
+164|                    <div className={`${colors.light} px-4 py-2`}>
+165|                      <span className="font-heading font-bold text-slate-900">{massif.altitude}</span>
+166|                    </div>
+167|                    <div className="flex items-center gap-2 text-slate-600">
+168|                      <MapPin className="h-4 w-4" />
+169|                      <span>Point culminant : {massif.highlight}</span>
+170|                    </div>
+171|                  </div>
+172|                  <p className="text-slate-600 text-lg leading-relaxed mb-8">
+173|                    {massif.description}
+174|                  </p>
+175|                  
+176|                  <div className="grid grid-cols-2 gap-4 mb-8">
+177|                    {massif.characteristics.map((char, i) => (
+178|                      <div key={i} className="flex items-start gap-3">
+179|                        <div className={`w-10 h-10 ${colors.light} rounded-full flex items-center justify-center flex-shrink-0`}>
+180|                          <char.icon className={`h-5 w-5 ${colors.text}`} />
+181|                        </div>
+182|                        <div>
+183|                          <p className="font-bold text-slate-900 text-sm">{char.label}</p>
+184|                          <p className="text-slate-600 text-sm">{char.text}</p>
+185|                        </div>
+186|                      </div>
+187|                    ))}
+188|                  </div>
+189|
+190|                  <div className={`${colors.light} p-6 border-l-4 ${colors.border}`}>
+191|                    <p className="font-bold text-slate-900 mb-2">Courses sur ce massif :</p>
+192|                    <ul>
+193|                      {massif.races.map((race, i) => (
+194|                        <li key={i} className="flex items-center gap-2 text-slate-700">
+195|                          <ChevronRight className={`h-4 w-4 ${colors.text}`} />
+196|                          {race}
+197|                        </li>
+198|                      ))}
+199|                    </ul>
+200|                  </div>
+201|                </div>
+202|                
+203|                <div className={isEven ? 'order-2' : 'order-2 lg:order-1'}>
+204|                  <div className="relative">
+205|                    <img 
+206|                      src={massif.image}
+207|                      alt={massif.name}
+208|                      className="w-full aspect-[4/3] object-cover"
+209|                    />
+210|                    <div className={`absolute -bottom-6 ${isEven ? '-right-6' : '-left-6'} ${colors.bg} text-white p-6 md:p-8`}>
+211|                      <Mountain className="h-8 w-8 mb-2" />
+212|                      <p className="font-heading text-xl font-bold uppercase">{massif.nickname}</p>
+213|                    </div>
+214|                  </div>
+215|                </div>
+216|              </div>
+217|            </div>
+218|          </section>
+219|        );
+220|      })}
+221|
+222|      {/* CTA Section */}
+223|      <section className="py-20 md:py-32 bg-slate-900" data-testid="massifs-cta-section">
+224|        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+225|          <h2 className="font-heading text-4xl md:text-5xl font-bold text-white uppercase tracking-tight mb-6">
+226|            Prêt à Explorer ?
+227|          </h2>
+228|          <p className="text-slate-400 text-lg mb-8">
+229|            Découvrez nos courses et lancez-vous à la conquête des 3 massifs de Grenoble.
+230|          </p>
+231|          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+232|            <Link
+233|              to="/courses"
+234|              className="inline-flex items-center justify-center rounded-full bg-orange-500 px-8 py-4 text-lg font-bold text-white transition-all hover:bg-orange-600 hover:scale-105"
+235|              data-testid="massifs-races-btn"
+236|            >
+237|              Voir les courses
+238|              <ArrowRight className="ml-2 h-5 w-5" />
+239|            </Link>
+240|            <Link
+241|              to="/championnat"
+242|              className="inline-flex items-center gap-2 text-white font-bold hover:text-orange-500 transition-colors"
+243|            >
+244|              Découvrir le championnat
+245|              <ChevronRight className="h-5 w-5" />
+246|            </Link>
+247|          </div>
+248|        </div>
+249|      </section>
+250|    </div>
+251|  );
+252|};
+253|
+254|export default Massifs;
+255|
+
+===END
+
+===FILE: /app/frontend/src/pages/Partners.jsx
+/app/frontend/src/pages/Partners.jsx:
+1|import { useState } from 'react';
+2|import { Link } from 'react-router-dom';
+3|import { ArrowRight, Check, Trophy, Users, Mountain, Mail, Building, Phone } from 'lucide-react';
+4|import { toast } from 'sonner';
+5|import axios from 'axios';
+6|
+7|const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+8|
+9|const packs = [
+10|  {
+11|    name: 'Bronze',
+12|    price: '500€',
+13|    description: 'Visibilité de base',
+14|    features: [
+15|      'Logo sur site web',
+16|      'Mention sur réseaux sociaux',
+17|      'Logo sur banderoles événements'
+18|    ],
+19|    highlighted: false
+20|  },
+21|  {
+22|    name: 'Argent',
+23|    price: '1 500€',
+24|    description: 'Pack populaire',
+25|    features: [
+26|      'Tout le pack Bronze',
+27|      'Logo sur dossards',
+28|      'Stand sur village départ',
+29|      'Goodies dans sacs coureurs',
+30|      '2 dossards offerts'
+31|    ],
+32|    highlighted: true
+33|  },
+34|  {
+35|    name: 'Or',
+36|    price: '3 000€',
+37|    description: 'Visibilité premium',
+38|    features: [
+39|      'Tout le pack Argent',
+40|      'Naming d\'une épreuve',
+41|      'Présence médias',
+42|      'Animation dédiée',
+43|      '5 dossards offerts',
+44|      'Accès VIP aux événements'
+45|    ],
+46|    highlighted: false
+47|  },
+48|  {
+49|    name: 'Platine',
+50|    price: 'Sur mesure',
+51|    description: 'Partenariat stratégique',
+52|    features: [
+53|      'Partenariat sur mesure',
+54|      'Co-création événements',
+55|      'Collaboration annuelle',
+56|      'Visibilité maximale',
+57|      'Accès illimité dossards'
+58|    ],
+59|    highlighted: false
+60|  }
+61|];
+62|
+63|export const Partners = () => {
+64|  const [formData, setFormData] = useState({
+65|    company_name: '',
+66|    contact_name: '',
+67|    email: '',
+68|    phone: '',
+69|    pack_interest: '',
+70|    message: ''
+71|  });
+72|  const [isSubmitting, setIsSubmitting] = useState(false);
+73|
+74|  const handleChange = (e) => {
+75|    setFormData({
+76|      ...formData,
+77|      [e.target.name]: e.target.value
+78|    });
+79|  };
+80|
+81|  const handleSubmit = async (e) => {
+82|    e.preventDefault();
+83|    if (!formData.company_name || !formData.contact_name || !formData.email || !formData.pack_interest) {
+84|      toast.error("Veuillez remplir tous les champs obligatoires");
+85|      return;
+86|    }
+87|    
+88|    setIsSubmitting(true);
+89|    try {
+90|      const response = await axios.post(`${API}/partner`, formData);
+91|      toast.success(response.data.message);
+92|      setFormData({
+93|        company_name: '',
+94|        contact_name: '',
+95|        email: '',
+96|        phone: '',
+97|        pack_interest: '',
+98|        message: ''
+99|      });
+100|    } catch (error) {
+101|      toast.error("Une erreur est survenue. Veuillez réessayer.");
+102|    } finally {
+103|      setIsSubmitting(false);
+104|    }
+105|  };
+106|
+107|  return (
+108|    <div data-testid="partners-page">
+109|      {/* Hero */}
+110|      <section className="bg-slate-900 py-20 md:py-32">
+111|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+112|          <span className="inline-block bg-orange-500 text-white text-sm font-bold uppercase tracking-wider px-4 py-2 mb-6">
+113|            Partenariats
+114|          </span>
+115|          <h1 className="font-heading text-5xl sm:text-6xl md:text-7xl font-black text-white uppercase tracking-tighter mb-6">
+116|            Devenez Partenaire
+117|          </h1>
+118|          <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+119|            Associez votre marque à un projet sportif innovant et local
+120|          </p>
+121|        </div>
+122|      </section>
+123|
+124|      {/* Why Partner */}
+125|      <section className="py-20 md:py-32 bg-white" data-testid="why-partner-section">
+126|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+127|          <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-center">
+128|            <div>
+129|              <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+130|                Pourquoi nous rejoindre
+131|              </span>
+132|              <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight mb-6">
+133|                Un Partenariat<br />Gagnant-Gagnant
+134|              </h2>
+135|              <p className="text-slate-600 text-lg leading-relaxed mb-8">
+136|                Les 3 Alpines, c'est plus qu'un événement sportif. C'est un projet communautaire qui rassemble les passionnés de trail autour de Grenoble. En devenant partenaire, vous touchez une audience engagée et locale.
+137|              </p>
+138|              
+139|              <div className="space-y-4">
+140|                <div className="flex items-start gap-4">
+141|                  <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
+142|                    <Users className="h-6 w-6 text-orange-500" />
+143|                  </div>
+144|                  <div>
+145|                    <h3 className="font-bold text-slate-900 mb-1">Communauté Engagée</h3>
+146|                    <p className="text-slate-600 text-sm">Une audience passionnée et fidèle, active sur les réseaux sociaux</p>
+147|                  </div>
+148|                </div>
+149|                
+150|                <div className="flex items-start gap-4">
+151|                  <div className="w-12 h-12 bg-sky-100 rounded-full flex items-center justify-center flex-shrink-0">
+152|                    <Mountain className="h-6 w-6 text-sky-500" />
+153|                  </div>
+154|                  <div>
+155|                    <h3 className="font-bold text-slate-900 mb-1">Valeurs Fortes</h3>
+156|                    <p className="text-slate-600 text-sm">Sport, nature, dépassement de soi et convivialité</p>
+157|                  </div>
+158|                </div>
+159|                
+160|                <div className="flex items-start gap-4">
+161|                  <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center flex-shrink-0">
+162|                    <Trophy className="h-6 w-6 text-emerald-500" />
+163|                  </div>
+164|                  <div>
+165|                    <h3 className="font-bold text-slate-900 mb-1">Visibilité Premium</h3>
+166|                    <p className="text-slate-600 text-sm">Présence sur tous nos supports de communication</p>
+167|                  </div>
+168|                </div>
+169|              </div>
+170|            </div>
+171|            
+172|            <div className="grid grid-cols-2 gap-4">
+173|              <div className="bg-slate-50 p-8 text-center">
+174|                <p className="font-heading text-5xl font-black text-orange-500">500+</p>
+175|                <p className="text-slate-600 mt-2">Participants attendus</p>
+176|              </div>
+177|              <div className="bg-slate-50 p-8 text-center">
+178|                <p className="font-heading text-5xl font-black text-sky-500">3</p>
+179|                <p className="text-slate-600 mt-2">Massifs emblématiques</p>
+180|              </div>
+181|              <div className="bg-slate-50 p-8 text-center">
+182|                <p className="font-heading text-5xl font-black text-emerald-500">10+</p>
+183|                <p className="text-slate-600 mt-2">Événements par saison</p>
+184|              </div>
+185|              <div className="bg-slate-50 p-8 text-center">
+186|                <p className="font-heading text-5xl font-black text-slate-900">1</p>
+187|                <p className="text-slate-600 mt-2">Communauté unique</p>
+188|              </div>
+189|            </div>
+190|          </div>
+191|        </div>
+192|      </section>
+193|
+194|      {/* Packs */}
+195|      <section className="py-20 md:py-32 bg-slate-50" data-testid="packs-section">
+196|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+197|          <div className="text-center mb-16">
+198|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+199|              Offres Partenaires
+200|            </span>
+201|            <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight">
+202|              Nos Packs Partenariat
+203|            </h2>
+204|          </div>
+205|
+206|          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+207|            {packs.map((pack, index) => (
+208|              <div 
+209|                key={index}
+210|                className={`bg-white p-8 border transition-all hover:shadow-xl ${
+211|                  pack.highlighted 
+212|                    ? 'border-2 border-orange-500 relative' 
+213|                    : 'border-slate-200 hover:border-orange-500'
+214|                }`}
+215|                data-testid={`pack-${pack.name.toLowerCase()}`}
+216|              >
+217|                {pack.highlighted && (
+218|                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-orange-500 text-white text-xs font-bold uppercase px-4 py-1">
+219|                    Populaire
+220|                  </div>
+221|                )}
+222|                <h3 className="font-heading text-2xl font-bold text-slate-900 uppercase mb-2">
+223|                  {pack.name}
+224|                </h3>
+225|                <p className="font-heading text-3xl font-black text-orange-500 mb-2">
+226|                  {pack.price}
+227|                </p>
+228|                <p className="text-slate-500 text-sm mb-6">{pack.description}</p>
+229|                
+230|                <ul className="space-y-3">
+231|                  {pack.features.map((feature, i) => (
+232|                    <li key={i} className="flex items-start gap-2 text-sm text-slate-700">
+233|                      <Check className="h-4 w-4 text-orange-500 flex-shrink-0 mt-0.5" />
+234|                      {feature}
+235|                    </li>
+236|                  ))}
+237|                </ul>
+238|              </div>
+239|            ))}
+240|          </div>
+241|        </div>
+242|      </section>
+243|
+244|      {/* Current Partners (Placeholders) */}
+245|      <section className="py-20 md:py-32 bg-white" data-testid="current-partners-section">
+246|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+247|          <div className="text-center mb-12">
+248|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+249|              Ils nous font confiance
+250|            </span>
+251|            <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight">
+252|              Nos Partenaires
+253|            </h2>
+254|          </div>
+255|
+256|          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+257|            {[1, 2, 3, 4].map((i) => (
+258|              <div 
+259|                key={i}
+260|                className="bg-slate-50 aspect-video flex items-center justify-center border border-slate-200"
+261|              >
+262|                <span className="text-slate-300 font-heading text-lg font-bold uppercase">
+263|                  Partenaire {i}
+264|                </span>
+265|              </div>
+266|            ))}
+267|          </div>
+268|          
+269|          <p className="text-center text-slate-500 mt-8">
+270|            Rejoignez-nous et faites partie de l'aventure Les 3 Alpines
+271|          </p>
+272|        </div>
+273|      </section>
+274|
+275|      {/* Contact Form */}
+276|      <section className="py-20 md:py-32 bg-slate-900" data-testid="partner-form-section">
+277|        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+278|          <div className="text-center mb-12">
+279|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+280|              Contactez-nous
+281|            </span>
+282|            <h2 className="font-heading text-4xl md:text-5xl font-bold text-white uppercase tracking-tight mb-4">
+283|              Devenir Partenaire
+284|            </h2>
+285|            <p className="text-slate-400">
+286|              Remplissez le formulaire ci-dessous et notre équipe vous contactera sous 48h
+287|            </p>
+288|          </div>
+289|
+290|          <form onSubmit={handleSubmit} className="bg-white p-8 md:p-12">
+291|            <div className="grid md:grid-cols-2 gap-6 mb-6">
+292|              <div>
+293|                <label className="block text-sm font-bold text-slate-900 mb-2">
+294|                  <Building className="inline h-4 w-4 mr-2" />
+295|                  Nom de l'entreprise *
+296|                </label>
+297|                <input
+298|                  type="text"
+299|                  name="company_name"
+300|                  value={formData.company_name}
+301|                  onChange={handleChange}
+302|                  className="w-full h-12 px-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+303|                  required
+304|                  data-testid="partner-company-input"
+305|                />
+306|              </div>
+307|              <div>
+308|                <label className="block text-sm font-bold text-slate-900 mb-2">
+309|                  <Users className="inline h-4 w-4 mr-2" />
+310|                  Nom du contact *
+311|                </label>
+312|                <input
+313|                  type="text"
+314|                  name="contact_name"
+315|                  value={formData.contact_name}
+316|                  onChange={handleChange}
+317|                  className="w-full h-12 px-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+318|                  required
+319|                  data-testid="partner-contact-input"
+320|                />
+321|              </div>
+322|            </div>
+323|
+324|            <div className="grid md:grid-cols-2 gap-6 mb-6">
+325|              <div>
+326|                <label className="block text-sm font-bold text-slate-900 mb-2">
+327|                  <Mail className="inline h-4 w-4 mr-2" />
+328|                  Email *
+329|                </label>
+330|                <input
+331|                  type="email"
+332|                  name="email"
+333|                  value={formData.email}
+334|                  onChange={handleChange}
+335|                  className="w-full h-12 px-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+336|                  required
+337|                  data-testid="partner-email-input"
+338|                />
+339|              </div>
+340|              <div>
+341|                <label className="block text-sm font-bold text-slate-900 mb-2">
+342|                  <Phone className="inline h-4 w-4 mr-2" />
+343|                  Téléphone
+344|                </label>
+345|                <input
+346|                  type="tel"
+347|                  name="phone"
+348|                  value={formData.phone}
+349|                  onChange={handleChange}
+350|                  className="w-full h-12 px-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+351|                  data-testid="partner-phone-input"
+352|                />
+353|              </div>
+354|            </div>
+355|
+356|            <div className="mb-6">
+357|              <label className="block text-sm font-bold text-slate-900 mb-2">
+358|                <Trophy className="inline h-4 w-4 mr-2" />
+359|                Pack qui vous intéresse *
+360|              </label>
+361|              <select
+362|                name="pack_interest"
+363|                value={formData.pack_interest}
+364|                onChange={handleChange}
+365|                className="w-full h-12 px-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
+366|                required
+367|                data-testid="partner-pack-select"
+368|              >
+369|                <option value="">Sélectionnez un pack</option>
+370|                <option value="bronze">Pack Bronze - 500€</option>
+371|                <option value="argent">Pack Argent - 1 500€</option>
+372|                <option value="or">Pack Or - 3 000€</option>
+373|                <option value="platine">Pack Platine - Sur mesure</option>
+374|              </select>
+375|            </div>
+376|
+377|            <div className="mb-8">
+378|              <label className="block text-sm font-bold text-slate-900 mb-2">
+379|                Message (optionnel)
+380|              </label>
+381|              <textarea
+382|                name="message"
+383|                value={formData.message}
+384|                onChange={handleChange}
+385|                rows={4}
+386|                className="w-full px-4 py-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none"
+387|                placeholder="Parlez-nous de votre entreprise et de vos attentes..."
+388|                data-testid="partner-message-input"
+389|              />
+390|            </div>
+391|
+392|            <button
+393|              type="submit"
+394|              disabled={isSubmitting}
+395|              className="w-full inline-flex items-center justify-center rounded-full bg-orange-500 px-8 py-4 text-lg font-bold text-white transition-all hover:bg-orange-600 disabled:opacity-50"
+396|              data-testid="partner-submit-btn"
+397|            >
+398|              {isSubmitting ? 'Envoi en cours...' : 'Envoyer ma demande'}
+399|              <ArrowRight className="ml-2 h-5 w-5" />
+400|            </button>
+401|          </form>
+402|        </div>
+403|      </section>
+404|    </div>
+405|  );
+406|};
+407|
+408|export default Partners;
+409|
+
+===END
+
+===FILE: /app/frontend/src/pages/Blog.jsx
+/app/frontend/src/pages/Blog.jsx:
+1|import { Link } from 'react-router-dom';
+2|import { ArrowRight, Calendar, Clock, User, ChevronRight, Tag } from 'lucide-react';
+3|
+4|const TRAIL_IMG_1 = "https://images.unsplash.com/photo-1699959560616-aa17ace76879?crop=entropy&cs=srgb&fm=jpg&q=85";
+5|const TRAIL_IMG_2 = "https://images.unsplash.com/photo-1600818596647-9d5318c20a8a?crop=entropy&cs=srgb&fm=jpg&q=85";
+6|const TRAIL_IMG_3 = "https://images.unsplash.com/photo-1700745286959-8658de43a15c?crop=entropy&cs=srgb&fm=jpg&q=85";
+7|
+8|const articles = [
+9|  {
+10|    id: 1,
+11|    title: 'Les 5 Conseils Essentiels pour Débuter en Trail',
+12|    excerpt: 'Vous voulez vous lancer dans le trail ? Voici nos conseils pour bien démarrer cette aventure et éviter les erreurs courantes.',
+13|    image: TRAIL_IMG_1,
+14|    category: 'Conseils',
+15|    author: 'L\'équipe Les 3 Alpines',
+16|    date: '15 Dec 2024',
+17|    readTime: '5 min'
+18|  },
+19|  {
+20|    id: 2,
+21|    title: 'Comment Préparer Sa Première Course de Trail',
+22|    excerpt: 'De l\'entraînement à l\'équipement, découvrez tout ce qu\'il faut savoir pour aborder sereinement votre première compétition.',
+23|    image: TRAIL_IMG_2,
+24|    category: 'Entraînement',
+25|    author: 'L\'équipe Les 3 Alpines',
+26|    date: '10 Dec 2024',
+27|    readTime: '8 min'
+28|  },
+29|  {
+30|    id: 3,
+31|    title: 'Les Plus Beaux Sentiers de Chartreuse',
+32|    excerpt: 'Découvrez notre sélection des meilleurs itinéraires de trail en Chartreuse, du débutant au confirmé.',
+33|    image: TRAIL_IMG_3,
+34|    category: 'Itinéraires',
+35|    author: 'L\'équipe Les 3 Alpines',
+36|    date: '5 Dec 2024',
+37|    readTime: '6 min'
+38|  }
+39|];
+40|
+41|const categories = ['Tous', 'Conseils', 'Entraînement', 'Itinéraires', 'Nutrition', 'Équipement'];
+42|
+43|export const Blog = () => {
+44|  return (
+45|    <div data-testid="blog-page">
+46|      {/* Hero */}
+47|      <section className="bg-slate-900 py-20 md:py-32">
+48|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+49|          <span className="inline-block bg-orange-500 text-white text-sm font-bold uppercase tracking-wider px-4 py-2 mb-6">
+50|            Blog & Conseils
+51|          </span>
+52|          <h1 className="font-heading text-5xl sm:text-6xl md:text-7xl font-black text-white uppercase tracking-tighter mb-6">
+53|            Nos Articles
+54|          </h1>
+55|          <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+56|            Conseils d'entraînement, itinéraires, nutrition... tout pour progresser en trail
+57|          </p>
+58|        </div>
+59|      </section>
+60|
+61|      {/* Categories */}
+62|      <section className="py-8 bg-white border-b border-slate-200">
+63|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+64|          <div className="flex flex-wrap gap-3 justify-center">
+65|            {categories.map((cat, index) => (
+66|              <button
+67|                key={index}
+68|                className={`px-4 py-2 text-sm font-bold uppercase tracking-wide transition-colors ${
+69|                  index === 0 
+70|                    ? 'bg-slate-900 text-white' 
+71|                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+72|                }`}
+73|                data-testid={`category-${cat.toLowerCase()}`}
+74|              >
+75|                {cat}
+76|              </button>
+77|            ))}
+78|          </div>
+79|        </div>
+80|      </section>
+81|
+82|      {/* Featured Article */}
+83|      <section className="py-20 bg-white" data-testid="featured-article-section">
+84|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+85|          <div className="grid lg:grid-cols-2 gap-0 overflow-hidden bg-slate-50">
+86|            <div 
+87|              className="aspect-video lg:aspect-auto min-h-[400px] bg-cover bg-center"
+88|              style={{ backgroundImage: `url(${articles[0].image})` }}
+89|            />
+90|            <div className="p-8 md:p-12 flex flex-col justify-center">
+91|              <div className="flex items-center gap-3 mb-4">
+92|                <span className="bg-orange-500 text-white px-3 py-1 text-xs font-bold uppercase">
+93|                  {articles[0].category}
+94|                </span>
+95|                <span className="text-slate-500 text-sm flex items-center gap-1">
+96|                  <Clock className="h-4 w-4" />
+97|                  {articles[0].readTime}
+98|                </span>
+99|              </div>
+100|              
+101|              <h2 className="font-heading text-3xl md:text-4xl font-bold text-slate-900 uppercase mb-4">
+102|                {articles[0].title}
+103|              </h2>
+104|              
+105|              <p className="text-slate-600 text-lg mb-6 leading-relaxed">
+106|                {articles[0].excerpt}
+107|              </p>
+108|
+109|              <div className="flex items-center gap-4 mb-6 text-sm text-slate-500">
+110|                <span className="flex items-center gap-1">
+111|                  <User className="h-4 w-4" />
+112|                  {articles[0].author}
+113|                </span>
+114|                <span className="flex items-center gap-1">
+115|                  <Calendar className="h-4 w-4" />
+116|                  {articles[0].date}
+117|                </span>
+118|              </div>
+119|
+120|              <button 
+121|                className="inline-flex items-center gap-2 text-orange-500 font-bold hover:text-orange-600 transition-colors w-fit"
+122|                data-testid="read-featured-btn"
+123|              >
+124|                Lire l'article
+125|                <ArrowRight className="h-5 w-5" />
+126|              </button>
+127|            </div>
+128|          </div>
+129|        </div>
+130|      </section>
+131|
+132|      {/* Articles Grid */}
+133|      <section className="py-20 bg-slate-50" data-testid="articles-grid-section">
+134|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+135|          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+136|            {articles.slice(1).map((article) => (
+137|              <article 
+138|                key={article.id}
+139|                className="bg-white overflow-hidden group hover:shadow-xl transition-all"
+140|                data-testid={`article-card-${article.id}`}
+141|              >
+142|                <div className="aspect-video overflow-hidden">
+143|                  <img 
+144|                    src={article.image}
+145|                    alt={article.title}
+146|                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+147|                  />
+148|                </div>
+149|                <div className="p-6">
+150|                  <div className="flex items-center gap-3 mb-3">
+151|                    <span className="bg-slate-100 text-slate-700 px-3 py-1 text-xs font-bold uppercase">
+152|                      {article.category}
+153|                    </span>
+154|                    <span className="text-slate-500 text-sm">{article.readTime}</span>
+155|                  </div>
+156|                  
+157|                  <h3 className="font-heading text-xl font-bold text-slate-900 uppercase mb-3 line-clamp-2">
+158|                    {article.title}
+159|                  </h3>
+160|                  
+161|                  <p className="text-slate-600 text-sm mb-4 line-clamp-2">
+162|                    {article.excerpt}
+163|                  </p>
+164|
+165|                  <div className="flex items-center justify-between">
+166|                    <span className="text-slate-500 text-sm">{article.date}</span>
+167|                    <button className="text-orange-500 font-bold text-sm hover:text-orange-600 transition-colors flex items-center gap-1">
+168|                      Lire
+169|                      <ChevronRight className="h-4 w-4" />
+170|                    </button>
+171|                  </div>
+172|                </div>
+173|              </article>
+174|            ))}
+175|
+176|            {/* Placeholder articles */}
+177|            {[4, 5, 6].map((i) => (
+178|              <article 
+179|                key={i}
+180|                className="bg-white overflow-hidden border border-dashed border-slate-300"
+181|                data-testid={`article-placeholder-${i}`}
+182|              >
+183|                <div className="aspect-video bg-slate-100 flex items-center justify-center">
+184|                  <span className="text-slate-300 font-heading text-lg font-bold uppercase">
+185|                    Article à venir
+186|                  </span>
+187|                </div>
+188|                <div className="p-6">
+189|                  <div className="h-4 bg-slate-100 rounded mb-3 w-20" />
+190|                  <div className="h-6 bg-slate-100 rounded mb-3" />
+191|                  <div className="h-4 bg-slate-100 rounded mb-2 w-3/4" />
+192|                  <div className="h-4 bg-slate-100 rounded w-1/2" />
+193|                </div>
+194|              </article>
+195|            ))}
+196|          </div>
+197|        </div>
+198|      </section>
+199|
+200|      {/* Newsletter CTA */}
+201|      <section className="py-20 md:py-32 bg-slate-900" data-testid="blog-newsletter-section">
+202|        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+203|          <h2 className="font-heading text-4xl md:text-5xl font-bold text-white uppercase tracking-tight mb-6">
+204|            Ne Manquez Rien
+205|          </h2>
+206|          <p className="text-slate-400 text-lg mb-8">
+207|            Inscrivez-vous à notre newsletter pour recevoir nos derniers articles et conseils trail directement dans votre boîte mail.
+208|          </p>
+209|          <Link
+210|            to="/contact"
+211|            className="inline-flex items-center justify-center rounded-full bg-orange-500 px-8 py-4 text-lg font-bold text-white transition-all hover:bg-orange-600 hover:scale-105"
+212|            data-testid="blog-newsletter-btn"
+213|          >
+214|            S'inscrire à la newsletter
+215|            <ArrowRight className="ml-2 h-5 w-5" />
+216|          </Link>
+217|        </div>
+218|      </section>
+219|    </div>
+220|  );
+221|};
+222|
+223|export default Blog;
+224|
+
+===END
+
+===FILE: /app/frontend/src/pages/Contact.jsx
+/app/frontend/src/pages/Contact.jsx:
+1|import { useState } from 'react';
+2|import { Mail, MapPin, Phone, MessageSquare, ChevronDown, ChevronUp, Send } from 'lucide-react';
+3|import { toast } from 'sonner';
+4|import axios from 'axios';
+5|import {
+6|  Accordion,
+7|  AccordionContent,
+8|  AccordionItem,
+9|  AccordionTrigger,
+10|} from "../components/ui/accordion";
+11|
+12|const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+13|
+14|const faqs = [
+15|  {
+16|    question: "Qui peut participer aux courses Les 3 Alpines ?",
+17|    answer: "Nos courses sont ouvertes à tous les traileurs amateurs, du débutant au confirmé. Certaines courses auront des formats adaptés à différents niveaux. L'important est de venir avec l'envie de se dépasser et de partager un moment convivial."
+18|  },
+19|  {
+20|    question: "Comment fonctionne le système de points du championnat ?",
+21|    answer: "Chaque course du championnat attribue des points selon votre classement. Le vainqueur obtient 100 points, puis dégressif. Des bonus sont accordés pour la participation à plusieurs courses. Le classement général cumule vos meilleurs résultats sur la saison."
+22|  },
+23|  {
+24|    question: "Quand auront lieu les premières courses ?",
+25|    answer: "La première course 'Les 3 Alpines - Bastille' est prévue pour 2026. Le championnat complet avec toutes les épreuves sur les 3 massifs débutera en 2027. Inscrivez-vous à la newsletter pour être informé des dates exactes."
+26|  },
+27|  {
+28|    question: "Quel équipement est obligatoire ?",
+29|    answer: "L'équipement obligatoire varie selon les courses et les conditions. En général : réserve d'eau (minimum 1L), téléphone portable chargé, couverture de survie, et vêtements adaptés à la météo. La liste complète sera communiquée avant chaque course."
+30|  },
+31|  {
+32|    question: "Comment s'inscrire aux courses ?",
+33|    answer: "Les inscriptions seront ouvertes plusieurs mois avant chaque course. Vous pourrez vous inscrire directement sur notre site. Le nombre de places étant limité, nous vous conseillons de vous inscrire rapidement."
+34|  },
+35|  {
+36|    question: "Y a-t-il des catégories d'âge ?",
+37|    answer: "Oui, le championnat comprend plusieurs catégories : 18-29 ans, 30-39 ans, 40-49 ans, 50-59 ans, et 60+. Il y a également des classements séparés hommes/femmes et un classement par équipes."
+38|  },
+39|  {
+40|    question: "Puis-je participer à une seule course sans viser le championnat ?",
+41|    answer: "Absolument ! Vous pouvez participer à une ou plusieurs courses de manière indépendante. Le championnat est une option pour ceux qui souhaitent s'engager sur toute la saison, mais chaque course est aussi un événement à part entière."
+42|  },
+43|  {
+44|    question: "Comment devenir partenaire ou sponsor ?",
+45|    answer: "Nous proposons plusieurs packs partenariat adaptés à différents budgets et objectifs. Consultez notre page Partenaires pour découvrir nos offres et remplir le formulaire de contact. Notre équipe vous répondra sous 48h."
+46|  }
+47|];
+48|
+49|export const Contact = () => {
+50|  const [contactForm, setContactForm] = useState({
+51|    name: '',
+52|    email: '',
+53|    subject: '',
+54|    message: ''
+55|  });
+56|  const [newsletterEmail, setNewsletterEmail] = useState('');
+57|  const [isSubmittingContact, setIsSubmittingContact] = useState(false);
+58|  const [isSubmittingNewsletter, setIsSubmittingNewsletter] = useState(false);
+59|
+60|  const handleContactChange = (e) => {
+61|    setContactForm({
+62|      ...contactForm,
+63|      [e.target.name]: e.target.value
+64|    });
+65|  };
+66|
+67|  const handleContactSubmit = async (e) => {
+68|    e.preventDefault();
+69|    if (!contactForm.name || !contactForm.email || !contactForm.subject || !contactForm.message) {
+70|      toast.error("Veuillez remplir tous les champs");
+71|      return;
+72|    }
+73|    
+74|    setIsSubmittingContact(true);
+75|    try {
+76|      const response = await axios.post(`${API}/contact`, contactForm);
+77|      toast.success(response.data.message);
+78|      setContactForm({ name: '', email: '', subject: '', message: '' });
+79|    } catch (error) {
+80|      toast.error("Une erreur est survenue. Veuillez réessayer.");
+81|    } finally {
+82|      setIsSubmittingContact(false);
+83|    }
+84|  };
+85|
+86|  const handleNewsletterSubmit = async (e) => {
+87|    e.preventDefault();
+88|    if (!newsletterEmail) return;
+89|    
+90|    setIsSubmittingNewsletter(true);
+91|    try {
+92|      const response = await axios.post(`${API}/newsletter`, { email: newsletterEmail });
+93|      toast.success(response.data.message);
+94|      setNewsletterEmail('');
+95|    } catch (error) {
+96|      toast.error("Une erreur est survenue. Veuillez réessayer.");
+97|    } finally {
+98|      setIsSubmittingNewsletter(false);
+99|    }
+100|  };
+101|
+102|  return (
+103|    <div data-testid="contact-page">
+104|      {/* Hero */}
+105|      <section className="bg-slate-900 py-20 md:py-32">
+106|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+107|          <span className="inline-block bg-orange-500 text-white text-sm font-bold uppercase tracking-wider px-4 py-2 mb-6">
+108|            Contact & FAQ
+109|          </span>
+110|          <h1 className="font-heading text-5xl sm:text-6xl md:text-7xl font-black text-white uppercase tracking-tighter mb-6">
+111|            Contactez-Nous
+112|          </h1>
+113|          <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+114|            Une question ? Une suggestion ? Nous sommes là pour vous répondre
+115|          </p>
+116|        </div>
+117|      </section>
+118|
+119|      {/* Contact Info + Form */}
+120|      <section className="py-20 md:py-32 bg-white" data-testid="contact-form-section">
+121|        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+122|          <div className="grid lg:grid-cols-3 gap-12">
+123|            {/* Contact Info */}
+124|            <div className="lg:col-span-1">
+125|              <h2 className="font-heading text-3xl font-bold text-slate-900 uppercase mb-8">
+126|                Nos Coordonnées
+127|              </h2>
+128|              
+129|              <div className="space-y-6">
+130|                <div className="flex items-start gap-4">
+131|                  <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
+132|                    <Mail className="h-5 w-5 text-orange-500" />
+133|                  </div>
+134|                  <div>
+135|                    <h3 className="font-bold text-slate-900 mb-1">Email</h3>
+136|                    <a href="mailto:contact@les3alpines.fr" className="text-slate-600 hover:text-orange-500 transition-colors">
+137|                      contact@les3alpines.fr
+138|                    </a>
+139|                  </div>
+140|                </div>
+141|                
+142|                <div className="flex items-start gap-4">
+143|                  <div className="w-12 h-12 bg-sky-100 rounded-full flex items-center justify-center flex-shrink-0">
+144|                    <MapPin className="h-5 w-5 text-sky-500" />
+145|                  </div>
+146|                  <div>
+147|                    <h3 className="font-bold text-slate-900 mb-1">Adresse</h3>
+148|                    <p className="text-slate-600">
+149|                      Grenoble, Isère<br />
+150|                      Auvergne-Rhône-Alpes
+151|                    </p>
+152|                  </div>
+153|                </div>
+154|                
+155|                <div className="flex items-start gap-4">
+156|                  <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center flex-shrink-0">
+157|                    <MessageSquare className="h-5 w-5 text-emerald-500" />
+158|                  </div>
+159|                  <div>
+160|                    <h3 className="font-bold text-slate-900 mb-1">Réseaux Sociaux</h3>
+161|                    <div className="flex gap-4">
+162|                      <a href="https://instagram.com" target="_blank" rel="noopener noreferrer" className="text-slate-600 hover:text-orange-500 transition-colors">
+163|                        Instagram
+164|                      </a>
+165|                      <a href="https://facebook.com" target="_blank" rel="noopener noreferrer" className="text-slate-600 hover:text-orange-500 transition-colors">
+166|                        Facebook
+167|                      </a>
+168|                    </div>
+169|                  </div>
+170|                </div>
+171|              </div>
+172|
+173|              {/* Newsletter mini form */}
+174|              <div className="mt-12 p-6 bg-slate-50">
+175|                <h3 className="font-heading text-xl font-bold text-slate-900 uppercase mb-3">
+176|                  Newsletter
+177|                </h3>
+178|                <p className="text-slate-600 text-sm mb-4">
+179|                  Restez informé de nos actualités
+180|                </p>
+181|                <form onSubmit={handleNewsletterSubmit} className="space-y-3">
+182|                  <input
+183|                    type="email"
+184|                    value={newsletterEmail}
+185|                    onChange={(e) => setNewsletterEmail(e.target.value)}
+186|                    placeholder="Votre email"
+187|                    className="w-full h-12 px-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+188|                    required
+189|                    data-testid="contact-newsletter-input"
+190|                  />
+191|                  <button
+192|                    type="submit"
+193|                    disabled={isSubmittingNewsletter}
+194|                    className="w-full inline-flex items-center justify-center rounded-full bg-orange-500 px-6 py-3 font-bold text-white transition-all hover:bg-orange-600 disabled:opacity-50"
+195|                    data-testid="contact-newsletter-btn"
+196|                  >
+197|                    {isSubmittingNewsletter ? 'Envoi...' : "S'inscrire"}
+198|                  </button>
+199|                </form>
+200|              </div>
+201|            </div>
+202|
+203|            {/* Contact Form */}
+204|            <div className="lg:col-span-2">
+205|              <h2 className="font-heading text-3xl font-bold text-slate-900 uppercase mb-8">
+206|                Envoyez-nous un Message
+207|              </h2>
+208|              
+209|              <form onSubmit={handleContactSubmit} className="space-y-6">
+210|                <div className="grid md:grid-cols-2 gap-6">
+211|                  <div>
+212|                    <label className="block text-sm font-bold text-slate-900 mb-2">
+213|                      Votre nom *
+214|                    </label>
+215|                    <input
+216|                      type="text"
+217|                      name="name"
+218|                      value={contactForm.name}
+219|                      onChange={handleContactChange}
+220|                      className="w-full h-12 px-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+221|                      required
+222|                      data-testid="contact-name-input"
+223|                    />
+224|                  </div>
+225|                  <div>
+226|                    <label className="block text-sm font-bold text-slate-900 mb-2">
+227|                      Votre email *
+228|                    </label>
+229|                    <input
+230|                      type="email"
+231|                      name="email"
+232|                      value={contactForm.email}
+233|                      onChange={handleContactChange}
+234|                      className="w-full h-12 px-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500"
+235|                      required
+236|                      data-testid="contact-email-input"
+237|                    />
+238|                  </div>
+239|                </div>
+240|
+241|                <div>
+242|                  <label className="block text-sm font-bold text-slate-900 mb-2">
+243|                    Sujet *
+244|                  </label>
+245|                  <select
+246|                    name="subject"
+247|                    value={contactForm.subject}
+248|                    onChange={handleContactChange}
+249|                    className="w-full h-12 px-4 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
+250|                    required
+251|                    data-testid="contact-subject-select"
+252|                  >
+253|                    <option value="">Sélectionnez un sujet</option>
+254|                    <option value="general">Question générale</option>
+255|                    <option value="inscription">Inscriptions</option>
+256|                    <option value="partenariat">Partenariat</option>
+257|                    <option value="presse">Presse / Média</option>
+258|                    <option value="autre">Autre</option>
+259|                  </select>
+260|                </div>
+261|
+262|                <div>
+263|                  <label className="block text-sm font-bold text-slate-900 mb-2">
+264|                    Votre message *
+265|                  </label>
+266|                  <textarea
+267|                    name="message"
+268|                    value={contactForm.message}
+269|                    onChange={handleContactChange}
+270|                    rows={6}
+271|                    className="w-full px-4 py-3 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none"
+272|                    placeholder="Écrivez votre message ici..."
+273|                    required
+274|                    data-testid="contact-message-input"
+275|                  />
+276|                </div>
+277|
+278|                <button
+279|                  type="submit"
+280|                  disabled={isSubmittingContact}
+281|                  className="inline-flex items-center justify-center rounded-full bg-orange-500 px-8 py-4 text-lg font-bold text-white transition-all hover:bg-orange-600 disabled:opacity-50"
+282|                  data-testid="contact-submit-btn"
+283|                >
+284|                  {isSubmittingContact ? 'Envoi en cours...' : 'Envoyer le message'}
+285|                  <Send className="ml-2 h-5 w-5" />
+286|                </button>
+287|              </form>
+288|            </div>
+289|          </div>
+290|        </div>
+291|      </section>
+292|
+293|      {/* FAQ Section */}
+294|      <section className="py-20 md:py-32 bg-slate-50" data-testid="faq-section">
+295|        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+296|          <div className="text-center mb-12">
+297|            <span className="text-orange-500 font-bold text-sm uppercase tracking-widest mb-4 block">
+298|              FAQ
+299|            </span>
+300|            <h2 className="font-heading text-4xl md:text-5xl font-bold text-slate-900 uppercase tracking-tight">
+301|              Questions Fréquentes
+302|            </h2>
+303|          </div>
+304|
+305|          <Accordion type="single" collapsible className="space-y-4">
+306|            {faqs.map((faq, index) => (
+307|              <AccordionItem 
+308|                key={index} 
+309|                value={`item-${index}`}
+310|                className="bg-white border border-slate-200 px-6"
+311|                data-testid={`faq-item-${index}`}
+312|              >
+313|                <AccordionTrigger className="py-6 text-left font-heading text-lg font-bold text-slate-900 hover:text-orange-500 hover:no-underline">
+314|                  {faq.question}
+315|                </AccordionTrigger>
+316|                <AccordionContent className="pb-6 text-slate-600 leading-relaxed">
+317|                  {faq.answer}
+318|                </AccordionContent>
+319|              </AccordionItem>
+320|            ))}
+321|          </Accordion>
+322|        </div>
+323|      </section>
+324|    </div>
+325|  );
+326|};
+327|
+328|export default Contact;
+329|
+
+===END
